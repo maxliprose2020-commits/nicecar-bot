@@ -29,6 +29,7 @@ openai_client = OpenAI(api_key=OPENAI_API_KEY)
 
 COUNTERS_FILE = "counters.json"
 MAX_GENERATIONS = 5
+OWNER_CHAT_ID = 862676483
 
 # ── Варианты на русском ────────────────────────────────────────────────────────
 
@@ -323,7 +324,7 @@ def options_keyboard(category: str, options: dict, current: str) -> InlineKeyboa
     rows = []
     for key, name in options.items():
         prefix = "✅ " if key == current else ""
-        rows.append([InlineKeyboardButton(f"{prefix}{name}", callback_data=f"sel_{category}_{key}")])
+        rows.append([InlineKeyboardButton(f"{prefix}{name}", callback_data=f"sel|{category}|{key}")])
     rows.append([InlineKeyboardButton("◀️ Назад", callback_data="back_main")])
     return InlineKeyboardMarkup(rows)
 
@@ -358,12 +359,33 @@ def build_prompt(selections: dict) -> str:
 
 # ── Хэндлеры ──────────────────────────────────────────────────────────────────
 
+def user_link(user) -> str:
+    name = user.full_name or "Без имени"
+    username = f" @{user.username}" if user.username else ""
+    return f"{name}{username}"
+
+
+async def notify_owner(context, text: str) -> None:
+    try:
+        await context.bot.send_message(chat_id=OWNER_CHAT_ID, text=text)
+    except Exception as e:
+        logger.error("Ошибка отправки уведомления: %s", e)
+
+
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
+    is_new = user_id not in user_states
     user_states[user_id] = {
         "photo_id": None,
         "selections": DEFAULT_SELECTIONS.copy(),
     }
+    if is_new:
+        await notify_owner(
+            context,
+            f"👤 Новый пользователь запустил бота:\n"
+            f"{user_link(update.effective_user)}\n"
+            f"ID: {user_id}"
+        )
     await update.message.reply_text(
         "👋 Привет! Я помогу тебе представить, как будет выглядеть твой автомобиль "
         "после тюнинга в Найскар Центр.\n\n"
@@ -456,8 +478,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             "🏙 Выбери фон:",
             reply_markup=options_keyboard("background", BACKGROUND_OPTIONS, sel["background"]),
         )
-    elif data.startswith("sel_"):
-        _, category, key = data.split("_", 2)
+    elif data.startswith("sel|"):
+        _, category, key = data.split("|", 2)
         sel[category] = key
         await query.edit_message_text(
             "Выбери услуги и нажми 🎨 Сгенерировать визуализацию:",
@@ -521,11 +543,27 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         increment_user_generations(user_id)
         remaining = MAX_GENERATIONS - get_user_generations(user_id)
 
+        await notify_owner(
+            context,
+            f"🎨 Новая генерация!\n\n"
+            f"👤 {user_link(query.from_user)}\n"
+            f"ID: {user_id}\n\n"
+            f"🎨 Кузов: {BODY_OPTIONS[sel['body']]}\n"
+            f"💿 Диски: {WHEELS_OPTIONS[sel['wheels']]} {WHEELS_SIZE_OPTIONS[sel['wheels_size']]}\n"
+            f"🪟 Тонировка задних: {TINT_OPTIONS[sel['tint']]}\n"
+            f"🔵 Лобовое: {WINDSHIELD_OPTIONS[sel['windshield']]}\n"
+            f"🌊 Боковые: {SIDEGLASS_OPTIONS[sel['sideglass']]}\n"
+            f"⚫ Антихром: {ANTICHROME_OPTIONS[sel['antichrome']]}\n"
+            f"🏎 Обвес: {BODYKIT_OPTIONS[sel['bodykit']]}\n"
+            f"✨ Декор: {DECOR_OPTIONS[sel['decor']]}\n"
+            f"📷 Ракурс: {ANGLE_OPTIONS[sel['angle']]}\n"
+            f"🏙 Фон: {BACKGROUND_OPTIONS[sel['background']]}"
+        )
+
         caption = (
             "✨ Визуализация готова!\n\n"
             f"🎨 {BODY_OPTIONS[sel['body']]}\n"
             f"💿 {WHEELS_OPTIONS[sel['wheels']]} {WHEELS_SIZE_OPTIONS[sel['wheels_size']]}  •  🪟 {TINT_OPTIONS[sel['tint']]}\n"
-            f"🌈 {FRONTGLASS_OPTIONS[sel['frontglass']]}\n"
             f"🔵 {WINDSHIELD_OPTIONS[sel['windshield']]}  •  🌊 {SIDEGLASS_OPTIONS[sel['sideglass']]}\n"
             f"📷 {ANGLE_OPTIONS[sel['angle']]}\n"
             f"⚫ {ANTICHROME_OPTIONS[sel['antichrome']]}  •  🏎 {BODYKIT_OPTIONS[sel['bodykit']]}\n"
