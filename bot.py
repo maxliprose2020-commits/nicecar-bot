@@ -4,6 +4,7 @@ import base64
 import json
 import logging
 from datetime import date
+from PIL import Image, ImageDraw, ImageFont
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -33,7 +34,7 @@ _notify_bot = TelegramBot(token=NOTIFY_TOKEN) if NOTIFY_TOKEN else None
 
 COUNTERS_FILE = "counters.json"
 MAX_GENERATIONS = 5
-OWNER_CHAT_ID = 862676483
+OWNER_CHAT_ID = int(os.environ.get("OWNER_CHAT_ID", "862676483"))
 
 # ── Варианты на русском ────────────────────────────────────────────────────────
 
@@ -318,6 +319,46 @@ DEFAULT_SELECTIONS = {
 
 # user_id → {"photo_id": str | None, "selections": dict}
 user_states: dict[int, dict] = {}
+
+
+# ── Водяной знак ──────────────────────────────────────────────────────────────
+
+def add_watermark(image_bytes: io.BytesIO) -> io.BytesIO:
+    img = Image.open(image_bytes).convert("RGBA")
+    overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+
+    text = "Найскар Центр"
+    font_size = max(28, img.width // 22)
+    font = None
+    for path in [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+        "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
+    ]:
+        try:
+            font = ImageFont.truetype(path, font_size)
+            break
+        except Exception:
+            pass
+    if font is None:
+        font = ImageFont.load_default()
+
+    bbox = draw.textbbox((0, 0), text, font=font)
+    tw = bbox[2] - bbox[0]
+    th = bbox[3] - bbox[1]
+    pad = 16
+    x = img.width - tw - pad
+    y = img.height - th - pad
+
+    draw.text((x + 1, y + 1), text, font=font, fill=(0, 0, 0, 120))
+    draw.text((x, y), text, font=font, fill=(255, 255, 255, 200))
+
+    combined = Image.alpha_composite(img, overlay)
+    out = io.BytesIO()
+    combined.convert("RGB").save(out, format="JPEG", quality=95)
+    out.seek(0)
+    return out
 
 
 # ── Счётчики генераций ─────────────────────────────────────────────────────────
@@ -677,7 +718,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 size="1024x1024",
                 n=1,
             )
-            image_bytes = io.BytesIO(base64.b64decode(response.data[0].b64_json))
+            image_bytes = add_watermark(io.BytesIO(base64.b64decode(response.data[0].b64_json)))
         except Exception as exc:
             logger.error("OpenAI error: %s", exc)
             await context.bot.send_message(
