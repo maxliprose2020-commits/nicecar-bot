@@ -1,8 +1,3 @@
-Read 1 file (ctrl+o to expand)
-
-● Иди в GitHub → nicecar-bot → нажми на bot.py → карандаш ✏️ → выдели всё
-  (Ctrl+A) → удали → вставь этот код:
-
   import os
   import io
   import base64
