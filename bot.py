@@ -542,25 +542,17 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         logger.info("prompt: %s", prompt)
 
         try:
-            if sel["angle"] == "original":
-                photo_file = await context.bot.get_file(state["photo_id"])
-                photo_data = await photo_file.download_as_bytearray()
-                photo_io = io.BytesIO(bytes(photo_data))
-                photo_io.name = "car.jpg"
-                response = openai_client.images.edit(
-                    model="gpt-image-1",
-                    image=photo_io,
-                    prompt=prompt,
-                    size="1024x1024",
-                    n=1,
-                )
-            else:
-                response = openai_client.images.generate(
-                    model="gpt-image-1",
-                    prompt=prompt,
-                    size="1024x1024",
-                    n=1,
-                )
+            photo_file = await context.bot.get_file(state["photo_id"])
+            photo_data = await photo_file.download_as_bytearray()
+            photo_io = io.BytesIO(bytes(photo_data))
+            photo_io.name = "car.jpg"
+            response = openai_client.images.edit(
+                model="gpt-image-1",
+                image=photo_io,
+                prompt=prompt,
+                size="1024x1024",
+                n=1,
+            )
             image_bytes = io.BytesIO(base64.b64decode(response.data[0].b64_json))
         except Exception as exc:
             logger.error("OpenAI error: %s", exc)
