@@ -172,14 +172,14 @@ TINT_EN = {
 WINDSHIELD_EN = {
     "none":      "clear windshield with no film",
     "tint_50":   "windshield with 50% tint film",
-    "chameleon": "windshield with blue-purple chameleon iridescent color-shifting film",
+    "chameleon": "windshield with very light blue-purple chameleon iridescent color-shifting film, 83% light transmission, barely tinted",
     "sea_wave":  "windshield with sea wave 70% light transmission light blue tinted film",
 }
 
 SIDEGLASS_EN = {
     "none":      "clear front side windows with no film",
     "tint_50":   "front side windows with 50% tint film",
-    "chameleon": "front side windows with blue-purple chameleon iridescent color-shifting film",
+    "chameleon": "front side windows with very light blue-purple chameleon iridescent color-shifting film, 83% light transmission, barely tinted",
     "sea_wave":  "front side windows with sea wave 70% light transmission light blue tinted film",
 }
 
