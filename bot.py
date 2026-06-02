@@ -32,32 +32,26 @@ MAX_GENERATIONS = 5
 
 # ── Варианты на русском ────────────────────────────────────────────────────────
 
-COLOR_OPTIONS = {
-    "black_matte":  "Чёрный матт",
-    "white_gloss":  "Белый глянец",
-    "grey_matte":   "Серый матт",
-    "blue_chrome":  "Синий хром",
-    "red_gloss":    "Красный глянец",
-    "green_matte":  "Зелёный матт",
-    "gold_chrome":  "Золотой хром",
-    "orange_matte": "Оранжевый матт",
-}
-
-FILM_OPTIONS = {
-    "matte":       "Матовая",
-    "gloss":       "Глянцевая",
-    "chrome":      "Хром",
-    "carbon":      "Карбон",
-    "camo":        "Камуфляж",
-    "psychedelic": "Психоделика",
+BODY_OPTIONS = {
+    "matte_original":  "Матовый (без смены цвета)",
+    "black_matte":     "Чёрный матт",
+    "white_matte":     "Белый матт",
+    "grey_matte":      "Серый матт",
+    "blue_matte":      "Синий матт",
+    "red_matte":       "Красный матт",
+    "green_matte":     "Зелёный матт",
+    "carbon":          "Карбон",
+    "chrome":          "Хром",
+    "camouflage":      "Камуфляж",
 }
 
 WHEELS_OPTIONS = {
-    "black":    "Чёрные",
-    "silver":   "Серебристые",
-    "gold":     "Золотые",
-    "chrome":   "Хром",
-    "original": "Оставить как есть",
+    "original":     "Оставить как есть",
+    "black_matte":  "Чёрные матт",
+    "black_gloss":  "Чёрные глянец",
+    "white":        "Белые",
+    "gold":         "Золотые",
+    "grey":         "Серые",
 }
 
 TINT_OPTIONS = {
@@ -65,6 +59,34 @@ TINT_OPTIONS = {
     "light":  "Лёгкая",
     "medium": "Средняя",
     "dark":   "Тёмная",
+}
+
+FRONTGLASS_OPTIONS = {
+    "standard":  "Стандартное",
+    "athermal":  "Атермальная плёнка",
+    "chameleon": "Хамелеон",
+    "sea_wave":  "Морская волна",
+}
+
+ANTICHROME_OPTIONS = {
+    "none":        "Без антихрома",
+    "gloss_black": "Чёрный глянец",
+    "matte_black": "Чёрный матт",
+}
+
+DECOR_OPTIONS = {
+    "none":          "Без декора",
+    "sport_stripes": "Спортивные полосы",
+    "side_stripes":  "Боковые полосы",
+    "ornament":      "Орнамент/узор",
+}
+
+BODYKIT_OPTIONS = {
+    "none":        "Без обвеса",
+    "sport":       "Спортивный обвес",
+    "aggressive":  "Агрессивный обвес",
+    "spoiler":     "Спойлер сзади",
+    "full":        "Полный обвес + спойлер",
 }
 
 BACKGROUND_OPTIONS = {
@@ -76,41 +98,63 @@ BACKGROUND_OPTIONS = {
     "minsk":       "Минск",
 }
 
-# ── Переводы для DALL-E промпта ────────────────────────────────────────────────
+# ── Переводы для промпта ───────────────────────────────────────────────────────
 
-COLOR_EN = {
-    "black_matte":  "matte black",
-    "white_gloss":  "glossy white",
-    "grey_matte":   "matte grey",
-    "blue_chrome":  "chrome blue",
-    "red_gloss":    "glossy red",
-    "green_matte":  "matte green",
-    "gold_chrome":  "chrome gold",
-    "orange_matte": "matte orange",
-}
-
-FILM_EN = {
-    "matte":       "matte vinyl",
-    "gloss":       "glossy vinyl",
-    "chrome":      "chrome vinyl",
-    "carbon":      "carbon fiber vinyl",
-    "camo":        "camouflage vinyl",
-    "psychedelic": "psychedelic holographic vinyl",
+BODY_EN = {
+    "matte_original":  "matte finish keeping the original color",
+    "black_matte":     "matte black vinyl wrap",
+    "white_matte":     "matte white vinyl wrap",
+    "grey_matte":      "matte grey vinyl wrap",
+    "blue_matte":      "matte blue vinyl wrap",
+    "red_matte":       "matte red vinyl wrap",
+    "green_matte":     "matte green vinyl wrap",
+    "carbon":          "carbon fiber vinyl wrap",
+    "chrome":          "chrome vinyl wrap",
+    "camouflage":      "camouflage vinyl wrap",
 }
 
 WHEELS_EN = {
-    "black":    "black",
-    "silver":   "silver",
-    "gold":     "gold",
-    "chrome":   "chrome",
-    "original": "stock original",
+    "original":     "original stock wheels",
+    "black_matte":  "matte black wheels",
+    "black_gloss":  "glossy black wheels",
+    "white":        "white wheels",
+    "gold":         "gold wheels",
+    "grey":         "grey wheels",
 }
 
 TINT_EN = {
-    "none":   "clear windows with no tint",
-    "light":  "lightly tinted windows",
-    "medium": "medium tinted windows",
-    "dark":   "heavily tinted windows",
+    "none":   "clear rear windows with no tint",
+    "light":  "lightly tinted rear windows",
+    "medium": "medium tinted rear windows",
+    "dark":   "heavily tinted rear windows",
+}
+
+FRONTGLASS_EN = {
+    "standard":  "clear standard front windshield",
+    "athermal":  "athermal heat-rejection film on front windows",
+    "chameleon": "chameleon iridescent color-shifting film on front windows",
+    "sea_wave":  "sea wave blue-green tinted film on front windows",
+}
+
+ANTICHROME_EN = {
+    "none":        "",
+    "gloss_black": "all chrome trim replaced with gloss black vinyl chrome delete",
+    "matte_black": "all chrome trim replaced with matte black vinyl chrome delete",
+}
+
+BODYKIT_EN = {
+    "none":        "",
+    "sport":       "sport body kit with side skirts and front lip spoiler",
+    "aggressive":  "aggressive wide-body kit with flared fenders and front splitter",
+    "spoiler":     "rear wing spoiler",
+    "full":        "full sport body kit with front splitter, side skirts, diffuser and rear wing spoiler",
+}
+
+DECOR_EN = {
+    "none":          "",
+    "sport_stripes": "bold racing stripes on hood and roof",
+    "side_stripes":  "decorative side body stripes",
+    "ornament":      "decorative ornamental pattern on the body panels",
 }
 
 BACKGROUND_EN = {
@@ -123,11 +167,14 @@ BACKGROUND_EN = {
 }
 
 DEFAULT_SELECTIONS = {
-    "color":      "black_matte",
-    "film":       "matte",
-    "wheels":     "black",
-    "tint":       "none",
-    "background": "night_city",
+    "body":        "black_matte",
+    "wheels":      "original",
+    "tint":        "none",
+    "frontglass":  "standard",
+    "antichrome":  "none",
+    "bodykit":     "none",
+    "decor":       "none",
+    "background":  "night_city",
 }
 
 # user_id → {"photo_id": str | None, "selections": dict}
@@ -172,26 +219,38 @@ def increment_user_generations(user_id: int) -> None:
 def main_menu(selections: dict) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(
-            f"🎨 Цвет: {COLOR_OPTIONS[selections['color']]}",
-            callback_data="cat_color",
-        )],
-        [InlineKeyboardButton(
-            f"🖤 Плёнка: {FILM_OPTIONS[selections['film']]}",
-            callback_data="cat_film",
+            f"🎨 Кузов: {BODY_OPTIONS[selections['body']]}",
+            callback_data="cat_body",
         )],
         [InlineKeyboardButton(
             f"💿 Диски: {WHEELS_OPTIONS[selections['wheels']]}",
             callback_data="cat_wheels",
         )],
         [InlineKeyboardButton(
-            f"🪟 Тонировка: {TINT_OPTIONS[selections['tint']]}",
+            f"🪟 Тонировка задних: {TINT_OPTIONS[selections['tint']]}",
             callback_data="cat_tint",
+        )],
+        [InlineKeyboardButton(
+            f"🌈 Передние стёкла: {FRONTGLASS_OPTIONS[selections['frontglass']]}",
+            callback_data="cat_frontglass",
+        )],
+        [InlineKeyboardButton(
+            f"⚫ Антихром: {ANTICHROME_OPTIONS[selections['antichrome']]}",
+            callback_data="cat_antichrome",
+        )],
+        [InlineKeyboardButton(
+            f"🏎 Обвес: {BODYKIT_OPTIONS[selections['bodykit']]}",
+            callback_data="cat_bodykit",
+        )],
+        [InlineKeyboardButton(
+            f"✨ Декор: {DECOR_OPTIONS[selections['decor']]}",
+            callback_data="cat_decor",
         )],
         [InlineKeyboardButton(
             f"🏙 Фон: {BACKGROUND_OPTIONS[selections['background']]}",
             callback_data="cat_background",
         )],
-        [InlineKeyboardButton("✨ Сгенерировать", callback_data="generate")],
+        [InlineKeyboardButton("🎨 Сгенерировать визуализацию", callback_data="generate")],
     ])
 
 
@@ -207,14 +266,21 @@ def options_keyboard(category: str, options: dict, current: str) -> InlineKeyboa
 # ── Промпт ────────────────────────────────────────────────────────────────────
 
 def build_prompt(selections: dict) -> str:
-    color = COLOR_EN[selections["color"]]
-    film = FILM_EN[selections["film"]]
+    body = BODY_EN[selections["body"]]
     wheels = WHEELS_EN[selections["wheels"]]
     tint = TINT_EN[selections["tint"]]
+    frontglass = FRONTGLASS_EN[selections["frontglass"]]
+    antichrome = ANTICHROME_EN[selections["antichrome"]]
+    decor = DECOR_EN[selections["decor"]]
     background = BACKGROUND_EN[selections["background"]]
+
+    bodykit = BODYKIT_EN[selections["bodykit"]]
+    extras = [x for x in [antichrome, bodykit, decor] if x]
+    extras_text = (", " + ", ".join(extras)) if extras else ""
+
     return (
-        f"Edit this car: apply a full {color} {film} wrap to the entire car body, "
-        f"change the wheels to {wheels} rims, apply {tint}, "
+        f"Edit this car: apply {body}, change wheels to {wheels}, "
+        f"{tint}, {frontglass}{extras_text}, "
         f"place the car in {background}. "
         f"Keep the exact same car model, shape and camera angle. "
         f"Photorealistic, 4K, professional automotive photography."
@@ -243,15 +309,12 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             "photo_id": None,
             "selections": DEFAULT_SELECTIONS.copy(),
         }
-
-    # Берём фото наибольшего размера
     user_states[user_id]["photo_id"] = update.message.photo[-1].file_id
-
     remaining = MAX_GENERATIONS - get_user_generations(user_id)
     await update.message.reply_text(
         f"✅ Фото получено!\n"
         f"Осталось генераций сегодня: {remaining} из {MAX_GENERATIONS}\n\n"
-        "Выбери параметры тюнинга и нажми ✨ Сгенерировать:",
+        "Выбери услуги и нажми 🎨 Сгенерировать визуализацию:",
         reply_markup=main_menu(user_states[user_id]["selections"]),
     )
 
@@ -259,7 +322,6 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
-
     user_id = query.from_user.id
     data = query.data
 
@@ -270,59 +332,65 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     state = user_states[user_id]
     sel = state["selections"]
 
-    # ── Открыть категорию ──────────────────────────────────────────────────────
-    if data == "cat_color":
+    if data == "cat_body":
         await query.edit_message_text(
-            "🎨 Выбери цвет кузова:",
-            reply_markup=options_keyboard("color", COLOR_OPTIONS, sel["color"]),
-        )
-    elif data == "cat_film":
-        await query.edit_message_text(
-            "🖤 Выбери тип плёнки:",
-            reply_markup=options_keyboard("film", FILM_OPTIONS, sel["film"]),
+            "🎨 Выбери покрытие кузова:",
+            reply_markup=options_keyboard("body", BODY_OPTIONS, sel["body"]),
         )
     elif data == "cat_wheels":
         await query.edit_message_text(
-            "💿 Выбери диски:",
+            "💿 Выбери цвет дисков:",
             reply_markup=options_keyboard("wheels", WHEELS_OPTIONS, sel["wheels"]),
         )
     elif data == "cat_tint":
         await query.edit_message_text(
-            "🪟 Выбери тонировку:",
+            "🪟 Тонировка задних стёкол:",
             reply_markup=options_keyboard("tint", TINT_OPTIONS, sel["tint"]),
+        )
+    elif data == "cat_frontglass":
+        await query.edit_message_text(
+            "🌈 Передние стёкла:",
+            reply_markup=options_keyboard("frontglass", FRONTGLASS_OPTIONS, sel["frontglass"]),
+        )
+    elif data == "cat_antichrome":
+        await query.edit_message_text(
+            "⚫ Антихром — оклейка хромированных деталей:",
+            reply_markup=options_keyboard("antichrome", ANTICHROME_OPTIONS, sel["antichrome"]),
+        )
+    elif data == "cat_bodykit":
+        await query.edit_message_text(
+            "🏎 Выбери обвес:",
+            reply_markup=options_keyboard("bodykit", BODYKIT_OPTIONS, sel["bodykit"]),
+        )
+    elif data == "cat_decor":
+        await query.edit_message_text(
+            "✨ Декоративные элементы:",
+            reply_markup=options_keyboard("decor", DECOR_OPTIONS, sel["decor"]),
         )
     elif data == "cat_background":
         await query.edit_message_text(
             "🏙 Выбери фон:",
             reply_markup=options_keyboard("background", BACKGROUND_OPTIONS, sel["background"]),
         )
-
-    # ── Выбрать опцию ──────────────────────────────────────────────────────────
     elif data.startswith("sel_"):
-        # формат: sel_<category>_<key>   (key может содержать _)
         _, category, key = data.split("_", 2)
         sel[category] = key
         await query.edit_message_text(
-            "Параметры тюнинга — выбери что нужно и нажми ✨ Сгенерировать:",
+            "Выбери услуги и нажми 🎨 Сгенерировать визуализацию:",
             reply_markup=main_menu(sel),
         )
-
-    # ── Назад в главное меню ───────────────────────────────────────────────────
     elif data == "back_main":
         if query.message.photo:
-            # Нельзя редактировать фото как текст — отправляем новое сообщение
             await context.bot.send_message(
                 chat_id=query.message.chat_id,
-                text="Параметры тюнинга — выбери что нужно и нажми ✨ Сгенерировать:",
+                text="Выбери услуги и нажми 🎨 Сгенерировать визуализацию:",
                 reply_markup=main_menu(sel),
             )
         else:
             await query.edit_message_text(
-                "Параметры тюнинга — выбери что нужно и нажми ✨ Сгенерировать:",
+                "Выбери услуги и нажми 🎨 Сгенерировать визуализацию:",
                 reply_markup=main_menu(sel),
             )
-
-    # ── Генерировать ───────────────────────────────────────────────────────────
     elif data == "generate":
         if not state.get("photo_id"):
             await query.edit_message_text(
@@ -334,15 +402,15 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         gens = get_user_generations(user_id)
         if gens >= MAX_GENERATIONS:
             await query.edit_message_text(
-                f"Ты использовал {MAX_GENERATIONS} бесплатных генераций на сегодня.\n\n"
+                f"Ты использовал {MAX_GENERATIONS} бесплатных визуализаций на сегодня.\n\n"
                 "Напиши нам в @nicecar_center для получения дополнительных генераций 🚗"
             )
             return
 
-        await query.edit_message_text("⏳ Генерирую изображение… это займёт 30–60 секунд.")
+        await query.edit_message_text("⏳ Генерирую визуализацию… это займёт 30–60 секунд.")
 
         prompt = build_prompt(sel)
-        logger.info("DALL-E prompt: %s", prompt)
+        logger.info("prompt: %s", prompt)
 
         try:
             photo_file = await context.bot.get_file(state["photo_id"])
@@ -370,10 +438,12 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         remaining = MAX_GENERATIONS - get_user_generations(user_id)
 
         caption = (
-            "✨ Вот твоя машина в новом стиле!\n\n"
-            f"🎨 {COLOR_OPTIONS[sel['color']]}  •  🖤 {FILM_OPTIONS[sel['film']]}\n"
+            "✨ Визуализация готова!\n\n"
+            f"🎨 {BODY_OPTIONS[sel['body']]}\n"
             f"💿 {WHEELS_OPTIONS[sel['wheels']]}  •  🪟 {TINT_OPTIONS[sel['tint']]}\n"
-            f"🏙 {BACKGROUND_OPTIONS[sel['background']]}\n\n"
+            f"🌈 {FRONTGLASS_OPTIONS[sel['frontglass']]}\n"
+            f"⚫ {ANTICHROME_OPTIONS[sel['antichrome']]}  •  🏎 {BODYKIT_OPTIONS[sel['bodykit']]}\n"
+            f"✨ {DECOR_OPTIONS[sel['decor']]}\n\n"
             f"Осталось генераций сегодня: {remaining} из {MAX_GENERATIONS}"
         )
 
@@ -394,11 +464,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 def main() -> None:
     app = Application.builder().token(TELEGRAM_TOKEN).build()
-
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(CallbackQueryHandler(handle_callback))
-
     logger.info("Бот запущен")
     app.run_polling(drop_pending_updates=True)
 
