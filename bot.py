@@ -34,16 +34,30 @@ OWNER_CHAT_ID = 862676483
 # ── Варианты на русском ────────────────────────────────────────────────────────
 
 BODY_OPTIONS = {
-    "matte_original":  "Матовый (без смены цвета)",
-    "black_matte":     "Чёрный матт",
-    "white_matte":     "Белый матт",
-    "grey_matte":      "Серый матт",
-    "blue_matte":      "Синий матт",
-    "red_matte":       "Красный матт",
-    "green_matte":     "Зелёный матт",
-    "carbon":          "Карбон",
-    "chrome":          "Хром",
-    "camouflage":      "Камуфляж",
+    "original":  "Без смены цвета",
+    "black":     "Чёрный",
+    "white":     "Белый",
+    "grey":      "Серый",
+    "silver":    "Серебристый",
+    "blue":      "Синий",
+    "navy":      "Тёмно-синий",
+    "red":       "Красный",
+    "burgundy":  "Бордовый",
+    "green":     "Зелёный",
+    "orange":    "Оранжевый",
+    "yellow":    "Жёлтый",
+    "purple":    "Фиолетовый",
+    "beige":     "Бежевый",
+    "brown":     "Коричневый",
+}
+
+FINISH_OPTIONS = {
+    "matte":      "Матт",
+    "gloss":      "Глянец",
+    "satin":      "Сатин",
+    "carbon":     "Карбон",
+    "chrome":     "Хром",
+    "camouflage": "Камуфляж",
 }
 
 WHEELS_OPTIONS = {
@@ -133,16 +147,30 @@ BACKGROUND_OPTIONS = {
 # ── Переводы для промпта ───────────────────────────────────────────────────────
 
 BODY_EN = {
-    "matte_original":  "matte finish keeping the original color",
-    "black_matte":     "matte black vinyl wrap",
-    "white_matte":     "matte white vinyl wrap",
-    "grey_matte":      "matte grey vinyl wrap",
-    "blue_matte":      "matte blue vinyl wrap",
-    "red_matte":       "matte red vinyl wrap",
-    "green_matte":     "matte green vinyl wrap",
-    "carbon":          "carbon fiber vinyl wrap",
-    "chrome":          "chrome vinyl wrap",
-    "camouflage":      "camouflage vinyl wrap",
+    "original":  "original color",
+    "black":     "black",
+    "white":     "white",
+    "grey":      "grey",
+    "silver":    "silver",
+    "blue":      "blue",
+    "navy":      "dark navy blue",
+    "red":       "red",
+    "burgundy":  "deep burgundy",
+    "green":     "green",
+    "orange":    "orange",
+    "yellow":    "yellow",
+    "purple":    "purple",
+    "beige":     "beige",
+    "brown":     "brown",
+}
+
+FINISH_EN = {
+    "matte":      "matte vinyl wrap",
+    "gloss":      "gloss vinyl wrap",
+    "satin":      "satin vinyl wrap",
+    "carbon":     "carbon fiber vinyl wrap",
+    "chrome":     "chrome vinyl wrap",
+    "camouflage": "camouflage vinyl wrap",
 }
 
 WHEELS_EN = {
@@ -230,7 +258,8 @@ BACKGROUND_EN = {
 }
 
 DEFAULT_SELECTIONS = {
-    "body":         "black_matte",
+    "body":         "black",
+    "finish":       "matte",
     "wheels":       "original",
     "wheels_size":  "original",
     "tint":         "none",
@@ -286,8 +315,12 @@ def increment_user_generations(user_id: int) -> None:
 def main_menu(selections: dict) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(
-            f"🎨 Кузов: {BODY_OPTIONS[selections['body']]}",
+            f"🎨 Цвет кузова: {BODY_OPTIONS[selections['body']]}",
             callback_data="cat_body",
+        )],
+        [InlineKeyboardButton(
+            f"🔲 Покрытие: {FINISH_OPTIONS[selections['finish']]}",
+            callback_data="cat_finish",
         )],
         [InlineKeyboardButton(
             f"💿 Диски: {WHEELS_OPTIONS[selections['wheels']]}",
@@ -349,7 +382,14 @@ def options_keyboard(category: str, options: dict, current: str) -> InlineKeyboa
 # ── Промпт ────────────────────────────────────────────────────────────────────
 
 def build_prompt(selections: dict) -> str:
-    body = BODY_EN[selections["body"]]
+    finish = selections["finish"]
+    color = BODY_EN[selections["body"]]
+    if finish in ("carbon", "chrome", "camouflage"):
+        body = FINISH_EN[finish]
+    elif selections["body"] == "original":
+        body = f"{FINISH_EN[finish]} keeping the original color"
+    else:
+        body = f"{color} {FINISH_EN[finish]}"
     wheels_size = WHEELS_SIZE_EN[selections["wheels_size"]]
     wheels_color = WHEELS_EN[selections["wheels"]]
     wheels = f"{wheels_size} {wheels_color}".strip()
@@ -367,11 +407,16 @@ def build_prompt(selections: dict) -> str:
 
     angle = ANGLE_EN[selections["angle"]]
     return (
-        f"Edit this car: apply {body}, change wheels to {wheels}, "
-        f"{tint}, {windshield}, {sideglass}{extras_text}, "
-        f"place the car in {background}, show the car from {angle}. "
-        f"Keep the exact same car model and shape. "
-        f"Photorealistic, 4K, professional automotive photography."
+        f"Professional automotive photo retouching. "
+        f"Take this exact car and apply the following modifications: {body}, wheels changed to {wheels}, "
+        f"{tint}, {windshield}, {sideglass}{extras_text}. "
+        f"Place the car in {background}, camera angle: {angle}. "
+        f"CRITICAL REQUIREMENTS: "
+        f"Keep the exact same car make, model, body shape, proportions, and all exterior details. "
+        f"Hyper-realistic photography, no cartoon or illustration style. "
+        f"Shot with a professional camera, sharp focus, physically accurate materials and reflections. "
+        f"The result must look like a real photograph of a real car, indistinguishable from a studio automotive photo. "
+        f"8K resolution, cinematic lighting, ray-traced reflections."
     )
 
 
@@ -443,8 +488,13 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     if data == "cat_body":
         await query.edit_message_text(
-            "🎨 Выбери покрытие кузова:",
+            "🎨 Выбери цвет кузова:",
             reply_markup=options_keyboard("body", BODY_OPTIONS, sel["body"]),
+        )
+    elif data == "cat_finish":
+        await query.edit_message_text(
+            "🔲 Выбери тип покрытия:",
+            reply_markup=options_keyboard("finish", FINISH_OPTIONS, sel["finish"]),
         )
     elif data == "cat_wheels":
         await query.edit_message_text(
@@ -570,7 +620,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             f"🎨 Новая генерация!\n\n"
             f"👤 {user_link(query.from_user)}\n"
             f"ID: {user_id}\n\n"
-            f"🎨 Кузов: {BODY_OPTIONS[sel['body']]}\n"
+            f"🎨 Кузов: {BODY_OPTIONS[sel['body']]} {FINISH_OPTIONS[sel['finish']]}\n"
             f"💿 Диски: {WHEELS_OPTIONS[sel['wheels']]} {WHEELS_SIZE_OPTIONS[sel['wheels_size']]}\n"
             f"🪟 Тонировка задних: {TINT_OPTIONS[sel['tint']]}\n"
             f"🔵 Лобовое: {WINDSHIELD_OPTIONS[sel['windshield']]}\n"
@@ -585,7 +635,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
         caption = (
             "✨ Визуализация готова!\n\n"
-            f"🎨 {BODY_OPTIONS[sel['body']]}\n"
+            f"🎨 {BODY_OPTIONS[sel['body']]} {FINISH_OPTIONS[sel['finish']]}\n"
             f"💿 {WHEELS_OPTIONS[sel['wheels']]} {WHEELS_SIZE_OPTIONS[sel['wheels_size']]}  •  🪟 {TINT_OPTIONS[sel['tint']]}\n"
             f"🔵 {WINDSHIELD_OPTIONS[sel['windshield']]}  •  🌊 {SIDEGLASS_OPTIONS[sel['sideglass']]}\n"
             f"📷 {ANGLE_OPTIONS[sel['angle']]}\n"
