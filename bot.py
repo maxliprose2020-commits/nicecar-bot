@@ -84,6 +84,12 @@ SIDEGLASS_OPTIONS = {
     "sea_wave":  "Морская волна (голубой оттенок)",
 }
 
+OPTICS_OPTIONS = {
+    "none":    "Без тонировки",
+    "tint_35": "Затемнение 35%",
+    "tint_50": "Затемнение 50%",
+}
+
 ANTICHROME_OPTIONS = {
     "none":        "Без антихрома",
     "gloss_black": "Чёрный глянец",
@@ -177,6 +183,12 @@ SIDEGLASS_EN = {
     "sea_wave":  "front side windows with sea wave 70% light transmission light blue tinted film",
 }
 
+OPTICS_EN = {
+    "none":    "",
+    "tint_35": "headlights and taillights tinted with 35% dark film",
+    "tint_50": "headlights and taillights tinted with 50% dark film",
+}
+
 ANTICHROME_EN = {
     "none":        "",
     "gloss_black": "all chrome trim replaced with gloss black vinyl chrome delete",
@@ -224,6 +236,7 @@ DEFAULT_SELECTIONS = {
     "tint":         "none",
     "windshield":   "none",
     "sideglass":    "none",
+    "optics":       "none",
     "antichrome":   "none",
     "bodykit":      "none",
     "decor":        "none",
@@ -297,6 +310,10 @@ def main_menu(selections: dict) -> InlineKeyboardMarkup:
             callback_data="cat_sideglass",
         )],
         [InlineKeyboardButton(
+            f"💡 Оптика: {OPTICS_OPTIONS[selections['optics']]}",
+            callback_data="cat_optics",
+        )],
+        [InlineKeyboardButton(
             f"⚫ Антихром: {ANTICHROME_OPTIONS[selections['antichrome']]}",
             callback_data="cat_antichrome",
         )],
@@ -343,8 +360,9 @@ def build_prompt(selections: dict) -> str:
     decor = DECOR_EN[selections["decor"]]
     background = BACKGROUND_EN[selections["background"]]
 
+    optics = OPTICS_EN[selections["optics"]]
     bodykit = BODYKIT_EN[selections["bodykit"]]
-    extras = [x for x in [antichrome, bodykit, decor] if x]
+    extras = [x for x in [optics, antichrome, bodykit, decor] if x]
     extras_text = (", " + ", ".join(extras)) if extras else ""
 
     angle = ANGLE_EN[selections["angle"]]
@@ -453,6 +471,11 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             "🌊 Передние боковые стёкла — выбери плёнку:",
             reply_markup=options_keyboard("sideglass", SIDEGLASS_OPTIONS, sel["sideglass"]),
         )
+    elif data == "cat_optics":
+        await query.edit_message_text(
+            "💡 Тонировка оптики (фары и фонари):",
+            reply_markup=options_keyboard("optics", OPTICS_OPTIONS, sel["optics"]),
+        )
     elif data == "cat_antichrome":
         await query.edit_message_text(
             "⚫ Антихром — оклейка хромированных деталей:",
@@ -519,18 +542,25 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         logger.info("prompt: %s", prompt)
 
         try:
-            photo_file = await context.bot.get_file(state["photo_id"])
-            photo_data = await photo_file.download_as_bytearray()
-            photo_io = io.BytesIO(bytes(photo_data))
-            photo_io.name = "car.jpg"
-
-            response = openai_client.images.edit(
-                model="gpt-image-1",
-                image=photo_io,
-                prompt=prompt,
-                size="1024x1024",
-                n=1,
-            )
+            if sel["angle"] == "original":
+                photo_file = await context.bot.get_file(state["photo_id"])
+                photo_data = await photo_file.download_as_bytearray()
+                photo_io = io.BytesIO(bytes(photo_data))
+                photo_io.name = "car.jpg"
+                response = openai_client.images.edit(
+                    model="gpt-image-1",
+                    image=photo_io,
+                    prompt=prompt,
+                    size="1024x1024",
+                    n=1,
+                )
+            else:
+                response = openai_client.images.generate(
+                    model="gpt-image-1",
+                    prompt=prompt,
+                    size="1024x1024",
+                    n=1,
+                )
             image_bytes = io.BytesIO(base64.b64decode(response.data[0].b64_json))
         except Exception as exc:
             logger.error("OpenAI error: %s", exc)
@@ -553,6 +583,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             f"🪟 Тонировка задних: {TINT_OPTIONS[sel['tint']]}\n"
             f"🔵 Лобовое: {WINDSHIELD_OPTIONS[sel['windshield']]}\n"
             f"🌊 Боковые: {SIDEGLASS_OPTIONS[sel['sideglass']]}\n"
+            f"💡 Оптика: {OPTICS_OPTIONS[sel['optics']]}\n"
             f"⚫ Антихром: {ANTICHROME_OPTIONS[sel['antichrome']]}\n"
             f"🏎 Обвес: {BODYKIT_OPTIONS[sel['bodykit']]}\n"
             f"✨ Декор: {DECOR_OPTIONS[sel['decor']]}\n"
@@ -566,7 +597,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             f"💿 {WHEELS_OPTIONS[sel['wheels']]} {WHEELS_SIZE_OPTIONS[sel['wheels_size']]}  •  🪟 {TINT_OPTIONS[sel['tint']]}\n"
             f"🔵 {WINDSHIELD_OPTIONS[sel['windshield']]}  •  🌊 {SIDEGLASS_OPTIONS[sel['sideglass']]}\n"
             f"📷 {ANGLE_OPTIONS[sel['angle']]}\n"
-            f"⚫ {ANTICHROME_OPTIONS[sel['antichrome']]}  •  🏎 {BODYKIT_OPTIONS[sel['bodykit']]}\n"
+            f"💡 {OPTICS_OPTIONS[sel['optics']]}  •  ⚫ {ANTICHROME_OPTIONS[sel['antichrome']]}\n"
+            f"🏎 {BODYKIT_OPTIONS[sel['bodykit']]}\n"
             f"✨ {DECOR_OPTIONS[sel['decor']]}\n\n"
             f"Осталось генераций сегодня: {remaining} из {MAX_GENERATIONS}"
         )
