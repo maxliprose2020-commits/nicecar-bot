@@ -54,6 +54,14 @@ WHEELS_OPTIONS = {
     "grey":         "Серые",
 }
 
+WHEELS_SIZE_OPTIONS = {
+    "original": "Стандартный",
+    "r19":      "R19",
+    "r20":      "R20",
+    "r21":      "R21",
+    "r22":      "R22",
+}
+
 TINT_OPTIONS = {
     "none":   "Без тонировки",
     "light":  "Лёгкая",
@@ -61,11 +69,18 @@ TINT_OPTIONS = {
     "dark":   "Тёмная",
 }
 
-FRONTGLASS_OPTIONS = {
-    "standard":  "Стандартное",
-    "athermal":  "Атермальная плёнка",
-    "chameleon": "Хамелеон",
-    "sea_wave":  "Морская волна",
+WINDSHIELD_OPTIONS = {
+    "none":      "Без плёнки",
+    "tint_50":   "Тонировка 50%",
+    "chameleon": "Хамелеон (сине-фиолетовый)",
+    "sea_wave":  "Морская волна (голубой оттенок)",
+}
+
+SIDEGLASS_OPTIONS = {
+    "none":      "Без плёнки",
+    "tint_50":   "Тонировка 50%",
+    "chameleon": "Хамелеон (сине-фиолетовый)",
+    "sea_wave":  "Морская волна (голубой оттенок)",
 }
 
 ANTICHROME_OPTIONS = {
@@ -87,6 +102,16 @@ BODYKIT_OPTIONS = {
     "aggressive":  "Агрессивный обвес",
     "spoiler":     "Спойлер сзади",
     "full":        "Полный обвес + спойлер",
+}
+
+ANGLE_OPTIONS = {
+    "original":    "Как на фото",
+    "front":       "Спереди",
+    "front_side":  "Спереди сбоку (3/4)",
+    "side":        "Сбоку",
+    "rear_side":   "Сзади сбоку (3/4)",
+    "rear":        "Сзади",
+    "top":         "Сверху",
 }
 
 BACKGROUND_OPTIONS = {
@@ -122,6 +147,14 @@ WHEELS_EN = {
     "grey":         "grey wheels",
 }
 
+WHEELS_SIZE_EN = {
+    "original": "",
+    "r19":      "19-inch",
+    "r20":      "20-inch",
+    "r21":      "21-inch",
+    "r22":      "22-inch",
+}
+
 TINT_EN = {
     "none":   "clear rear windows with no tint",
     "light":  "lightly tinted rear windows",
@@ -129,11 +162,18 @@ TINT_EN = {
     "dark":   "heavily tinted rear windows",
 }
 
-FRONTGLASS_EN = {
-    "standard":  "clear standard front windshield",
-    "athermal":  "athermal heat-rejection film on front windows",
-    "chameleon": "chameleon iridescent color-shifting film on front windows",
-    "sea_wave":  "sea wave blue-green tinted film on front windows",
+WINDSHIELD_EN = {
+    "none":      "clear windshield with no film",
+    "tint_50":   "windshield with 50% tint film",
+    "chameleon": "windshield with blue-purple chameleon iridescent color-shifting film",
+    "sea_wave":  "windshield with sea wave 70% light transmission light blue tinted film",
+}
+
+SIDEGLASS_EN = {
+    "none":      "clear front side windows with no film",
+    "tint_50":   "front side windows with 50% tint film",
+    "chameleon": "front side windows with blue-purple chameleon iridescent color-shifting film",
+    "sea_wave":  "front side windows with sea wave 70% light transmission light blue tinted film",
 }
 
 ANTICHROME_EN = {
@@ -157,6 +197,16 @@ DECOR_EN = {
     "ornament":      "decorative ornamental pattern on the body panels",
 }
 
+ANGLE_EN = {
+    "original":    "same camera angle as in the original photo",
+    "front":       "front view",
+    "front_side":  "front three-quarter view",
+    "side":        "side profile view",
+    "rear_side":   "rear three-quarter view",
+    "rear":        "rear view",
+    "top":         "top-down aerial view",
+}
+
 BACKGROUND_EN = {
     "night_city":  "night city with neon lights and bokeh",
     "mountains":   "scenic mountain landscape",
@@ -167,14 +217,17 @@ BACKGROUND_EN = {
 }
 
 DEFAULT_SELECTIONS = {
-    "body":        "black_matte",
-    "wheels":      "original",
-    "tint":        "none",
-    "frontglass":  "standard",
-    "antichrome":  "none",
-    "bodykit":     "none",
-    "decor":       "none",
-    "background":  "night_city",
+    "body":         "black_matte",
+    "wheels":       "original",
+    "wheels_size":  "original",
+    "tint":         "none",
+    "windshield":   "none",
+    "sideglass":    "none",
+    "antichrome":   "none",
+    "bodykit":      "none",
+    "decor":        "none",
+    "angle":        "original",
+    "background":   "night_city",
 }
 
 # user_id → {"photo_id": str | None, "selections": dict}
@@ -227,12 +280,20 @@ def main_menu(selections: dict) -> InlineKeyboardMarkup:
             callback_data="cat_wheels",
         )],
         [InlineKeyboardButton(
+            f"⚙️ Радиус: {WHEELS_SIZE_OPTIONS[selections['wheels_size']]}",
+            callback_data="cat_wheels_size",
+        )],
+        [InlineKeyboardButton(
             f"🪟 Тонировка задних: {TINT_OPTIONS[selections['tint']]}",
             callback_data="cat_tint",
         )],
         [InlineKeyboardButton(
-            f"🌈 Передние стёкла: {FRONTGLASS_OPTIONS[selections['frontglass']]}",
-            callback_data="cat_frontglass",
+            f"🔵 Лобовое стекло: {WINDSHIELD_OPTIONS[selections['windshield']]}",
+            callback_data="cat_windshield",
+        )],
+        [InlineKeyboardButton(
+            f"🌊 Боковые передние: {SIDEGLASS_OPTIONS[selections['sideglass']]}",
+            callback_data="cat_sideglass",
         )],
         [InlineKeyboardButton(
             f"⚫ Антихром: {ANTICHROME_OPTIONS[selections['antichrome']]}",
@@ -245,6 +306,10 @@ def main_menu(selections: dict) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(
             f"✨ Декор: {DECOR_OPTIONS[selections['decor']]}",
             callback_data="cat_decor",
+        )],
+        [InlineKeyboardButton(
+            f"📷 Ракурс: {ANGLE_OPTIONS[selections['angle']]}",
+            callback_data="cat_angle",
         )],
         [InlineKeyboardButton(
             f"🏙 Фон: {BACKGROUND_OPTIONS[selections['background']]}",
@@ -267,9 +332,12 @@ def options_keyboard(category: str, options: dict, current: str) -> InlineKeyboa
 
 def build_prompt(selections: dict) -> str:
     body = BODY_EN[selections["body"]]
-    wheels = WHEELS_EN[selections["wheels"]]
+    wheels_size = WHEELS_SIZE_EN[selections["wheels_size"]]
+    wheels_color = WHEELS_EN[selections["wheels"]]
+    wheels = f"{wheels_size} {wheels_color}".strip()
     tint = TINT_EN[selections["tint"]]
-    frontglass = FRONTGLASS_EN[selections["frontglass"]]
+    windshield = WINDSHIELD_EN[selections["windshield"]]
+    sideglass = SIDEGLASS_EN[selections["sideglass"]]
     antichrome = ANTICHROME_EN[selections["antichrome"]]
     decor = DECOR_EN[selections["decor"]]
     background = BACKGROUND_EN[selections["background"]]
@@ -278,11 +346,12 @@ def build_prompt(selections: dict) -> str:
     extras = [x for x in [antichrome, bodykit, decor] if x]
     extras_text = (", " + ", ".join(extras)) if extras else ""
 
+    angle = ANGLE_EN[selections["angle"]]
     return (
         f"Edit this car: apply {body}, change wheels to {wheels}, "
-        f"{tint}, {frontglass}{extras_text}, "
-        f"place the car in {background}. "
-        f"Keep the exact same car model, shape and camera angle. "
+        f"{tint}, {windshield}, {sideglass}{extras_text}, "
+        f"place the car in {background}, show the car from {angle}. "
+        f"Keep the exact same car model and shape. "
         f"Photorealistic, 4K, professional automotive photography."
     )
 
@@ -342,15 +411,25 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             "💿 Выбери цвет дисков:",
             reply_markup=options_keyboard("wheels", WHEELS_OPTIONS, sel["wheels"]),
         )
+    elif data == "cat_wheels_size":
+        await query.edit_message_text(
+            "⚙️ Выбери радиус дисков:",
+            reply_markup=options_keyboard("wheels_size", WHEELS_SIZE_OPTIONS, sel["wheels_size"]),
+        )
     elif data == "cat_tint":
         await query.edit_message_text(
             "🪟 Тонировка задних стёкол:",
             reply_markup=options_keyboard("tint", TINT_OPTIONS, sel["tint"]),
         )
-    elif data == "cat_frontglass":
+    elif data == "cat_windshield":
         await query.edit_message_text(
-            "🌈 Передние стёкла:",
-            reply_markup=options_keyboard("frontglass", FRONTGLASS_OPTIONS, sel["frontglass"]),
+            "🔵 Лобовое стекло — выбери плёнку:",
+            reply_markup=options_keyboard("windshield", WINDSHIELD_OPTIONS, sel["windshield"]),
+        )
+    elif data == "cat_sideglass":
+        await query.edit_message_text(
+            "🌊 Передние боковые стёкла — выбери плёнку:",
+            reply_markup=options_keyboard("sideglass", SIDEGLASS_OPTIONS, sel["sideglass"]),
         )
     elif data == "cat_antichrome":
         await query.edit_message_text(
@@ -366,6 +445,11 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await query.edit_message_text(
             "✨ Декоративные элементы:",
             reply_markup=options_keyboard("decor", DECOR_OPTIONS, sel["decor"]),
+        )
+    elif data == "cat_angle":
+        await query.edit_message_text(
+            "📷 Выбери ракурс:",
+            reply_markup=options_keyboard("angle", ANGLE_OPTIONS, sel["angle"]),
         )
     elif data == "cat_background":
         await query.edit_message_text(
@@ -440,8 +524,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         caption = (
             "✨ Визуализация готова!\n\n"
             f"🎨 {BODY_OPTIONS[sel['body']]}\n"
-            f"💿 {WHEELS_OPTIONS[sel['wheels']]}  •  🪟 {TINT_OPTIONS[sel['tint']]}\n"
+            f"💿 {WHEELS_OPTIONS[sel['wheels']]} {WHEELS_SIZE_OPTIONS[sel['wheels_size']]}  •  🪟 {TINT_OPTIONS[sel['tint']]}\n"
             f"🌈 {FRONTGLASS_OPTIONS[sel['frontglass']]}\n"
+            f"🔵 {WINDSHIELD_OPTIONS[sel['windshield']]}  •  🌊 {SIDEGLASS_OPTIONS[sel['sideglass']]}\n"
+            f"📷 {ANGLE_OPTIONS[sel['angle']]}\n"
             f"⚫ {ANTICHROME_OPTIONS[sel['antichrome']]}  •  🏎 {BODYKIT_OPTIONS[sel['bodykit']]}\n"
             f"✨ {DECOR_OPTIONS[sel['decor']]}\n\n"
             f"Осталось генераций сегодня: {remaining} из {MAX_GENERATIONS}"
