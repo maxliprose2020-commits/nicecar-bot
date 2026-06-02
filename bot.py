@@ -213,10 +213,11 @@ def build_prompt(selections: dict) -> str:
     tint = TINT_EN[selections["tint"]]
     background = BACKGROUND_EN[selections["background"]]
     return (
-        f"Realistic professional photo of a car fully wrapped in {color} {film}, "
-        f"{wheels} wheels, {tint}, parked in {background}. "
-        f"Photorealistic, 4K, professional automotive photography, studio lighting, "
-        f"sharp details, high contrast"
+        f"Edit this car: apply a full {color} {film} wrap to the entire car body, "
+        f"change the wheels to {wheels} rims, apply {tint}, "
+        f"place the car in {background}. "
+        f"Keep the exact same car model, shape and camera angle. "
+        f"Photorealistic, 4K, professional automotive photography."
     )
 
 
@@ -344,8 +345,14 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         logger.info("DALL-E prompt: %s", prompt)
 
         try:
-            response = openai_client.images.generate(
+            photo_file = await context.bot.get_file(state["photo_id"])
+            photo_data = await photo_file.download_as_bytearray()
+            photo_io = io.BytesIO(bytes(photo_data))
+            photo_io.name = "car.jpg"
+
+            response = openai_client.images.edit(
                 model="gpt-image-1",
+                image=photo_io,
                 prompt=prompt,
                 size="1024x1024",
                 n=1,
