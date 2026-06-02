@@ -378,7 +378,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
 
         result_keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🚗 Заказать в Найскар Центр", url="https://t.me/nicecar_center")],
+            [InlineKeyboardButton("🚗 Получить консультацию в Найскар Центр по внешнему виду", url="https://t.me/nicecar_center")],
             [InlineKeyboardButton("🔄 Изменить параметры", callback_data="back_main")],
         ])
 
