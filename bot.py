@@ -24,8 +24,12 @@ logger = logging.getLogger(__name__)
 
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
+NOTIFY_TOKEN = os.environ.get("NOTIFY_TOKEN")
 
 openai_client = OpenAI(api_key=OPENAI_API_KEY)
+
+from telegram import Bot as TelegramBot
+_notify_bot = TelegramBot(token=NOTIFY_TOKEN) if NOTIFY_TOKEN else None
 
 COUNTERS_FILE = "counters.json"
 MAX_GENERATIONS = 5
@@ -52,12 +56,13 @@ BODY_OPTIONS = {
 }
 
 FINISH_OPTIONS = {
-    "matte":      "Матт",
-    "gloss":      "Глянец",
-    "satin":      "Сатин",
-    "carbon":     "Карбон",
-    "chrome":     "Хром",
-    "camouflage": "Камуфляж",
+    "matte":       "Матт",
+    "gloss":       "Глянец",
+    "satin":       "Сатин",
+    "carbon":      "Карбон",
+    "chrome":      "Хром",
+    "camouflage":  "Камуфляж",
+    "psychedelic": "Психоделика",
 }
 
 WHEELS_OPTIONS = {
@@ -108,6 +113,23 @@ ANTICHROME_OPTIONS = {
     "none":        "Без антихрома",
     "gloss_black": "Чёрный глянец",
     "matte_black": "Чёрный матт",
+}
+
+MIRRORS_OPTIONS = {
+    "original":    "Оригинал",
+    "matte_black": "Чёрный матт",
+    "gloss_black": "Чёрный глянец",
+}
+
+HANDLES_OPTIONS = {
+    "original":    "Оригинал",
+    "matte_black": "Чёрный матт",
+    "gloss_black": "Чёрный глянец",
+}
+
+ROOF_OPTIONS = {
+    "original":    "Оригинал",
+    "gloss_black": "Чёрная крыша (эффект панорамы)",
 }
 
 DECOR_OPTIONS = {
@@ -165,12 +187,13 @@ BODY_EN = {
 }
 
 FINISH_EN = {
-    "matte":      "matte vinyl wrap",
-    "gloss":      "gloss vinyl wrap",
-    "satin":      "satin vinyl wrap",
-    "carbon":     "carbon fiber vinyl wrap",
-    "chrome":     "chrome vinyl wrap",
-    "camouflage": "camouflage vinyl wrap",
+    "matte":       "matte vinyl wrap",
+    "gloss":       "gloss vinyl wrap",
+    "satin":       "satin vinyl wrap",
+    "carbon":      "carbon fiber vinyl wrap",
+    "chrome":      "chrome vinyl wrap",
+    "camouflage":  "camouflage vinyl wrap",
+    "psychedelic": "psychedelic multicolor holographic vinyl wrap with vivid neon patterns",
 }
 
 WHEELS_EN = {
@@ -218,9 +241,26 @@ OPTICS_EN = {
 }
 
 ANTICHROME_EN = {
-    "none":        "",
-    "gloss_black": "all chrome trim replaced with gloss black vinyl chrome delete",
-    "matte_black": "all chrome trim replaced with matte black vinyl chrome delete",
+    "none":        "all chrome trim kept as original shiny chrome finish",
+    "gloss_black": "all chrome trim on the body replaced with gloss black vinyl chrome delete",
+    "matte_black": "all chrome trim on the body replaced with matte black vinyl chrome delete",
+}
+
+MIRRORS_EN = {
+    "original":    "",
+    "matte_black": "side mirrors wrapped in matte black vinyl",
+    "gloss_black": "side mirrors wrapped in gloss black vinyl",
+}
+
+HANDLES_EN = {
+    "original":    "",
+    "matte_black": "door handles wrapped in matte black vinyl",
+    "gloss_black": "door handles wrapped in gloss black vinyl",
+}
+
+ROOF_EN = {
+    "original":    "",
+    "gloss_black": "roof wrapped in gloss black vinyl giving a panoramic sunroof appearance",
 }
 
 BODYKIT_EN = {
@@ -267,6 +307,9 @@ DEFAULT_SELECTIONS = {
     "sideglass":    "none",
     "optics":       "none",
     "antichrome":   "none",
+    "mirrors":      "original",
+    "handles":      "original",
+    "roof":         "original",
     "bodykit":      "none",
     "decor":        "none",
     "angle":        "original",
@@ -351,6 +394,18 @@ def main_menu(selections: dict) -> InlineKeyboardMarkup:
             callback_data="cat_antichrome",
         )],
         [InlineKeyboardButton(
+            f"🪞 Зеркала: {MIRRORS_OPTIONS[selections['mirrors']]}",
+            callback_data="cat_mirrors",
+        )],
+        [InlineKeyboardButton(
+            f"🚪 Ручки дверей: {HANDLES_OPTIONS[selections['handles']]}",
+            callback_data="cat_handles",
+        )],
+        [InlineKeyboardButton(
+            f"🖤 Крыша: {ROOF_OPTIONS[selections['roof']]}",
+            callback_data="cat_roof",
+        )],
+        [InlineKeyboardButton(
             f"🏎 Обвес: {BODYKIT_OPTIONS[selections['bodykit']]}",
             callback_data="cat_bodykit",
         )],
@@ -384,7 +439,7 @@ def options_keyboard(category: str, options: dict, current: str) -> InlineKeyboa
 def build_prompt(selections: dict) -> str:
     finish = selections["finish"]
     color = BODY_EN[selections["body"]]
-    if finish in ("carbon", "chrome", "camouflage"):
+    if finish in ("carbon", "chrome", "camouflage", "psychedelic"):
         body = FINISH_EN[finish]
     elif selections["body"] == "original":
         body = f"{FINISH_EN[finish]} keeping the original color"
@@ -397,12 +452,15 @@ def build_prompt(selections: dict) -> str:
     windshield = WINDSHIELD_EN[selections["windshield"]]
     sideglass = SIDEGLASS_EN[selections["sideglass"]]
     antichrome = ANTICHROME_EN[selections["antichrome"]]
+    mirrors = MIRRORS_EN[selections["mirrors"]]
+    handles = HANDLES_EN[selections["handles"]]
+    roof = ROOF_EN[selections["roof"]]
     decor = DECOR_EN[selections["decor"]]
     background = BACKGROUND_EN[selections["background"]]
 
     optics = OPTICS_EN[selections["optics"]]
     bodykit = BODYKIT_EN[selections["bodykit"]]
-    extras = [x for x in [optics, antichrome, bodykit, decor] if x]
+    extras = [x for x in [optics, antichrome, mirrors, handles, roof, bodykit, decor] if x]
     extras_text = (", " + ", ".join(extras)) if extras else ""
 
     angle = ANGLE_EN[selections["angle"]]
@@ -430,7 +488,8 @@ def user_link(user) -> str:
 
 async def notify_owner(context, text: str) -> None:
     try:
-        await context.bot.send_message(chat_id=OWNER_CHAT_ID, text=text)
+        bot = _notify_bot if _notify_bot else context.bot
+        await bot.send_message(chat_id=OWNER_CHAT_ID, text=text)
     except Exception as e:
         logger.error("Ошибка отправки уведомления: %s", e)
 
@@ -528,8 +587,23 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
     elif data == "cat_antichrome":
         await query.edit_message_text(
-            "⚫ Антихром — оклейка хромированных деталей:",
+            "⚫ Антихром — оклейка хромированных деталей кузова:",
             reply_markup=options_keyboard("antichrome", ANTICHROME_OPTIONS, sel["antichrome"]),
+        )
+    elif data == "cat_mirrors":
+        await query.edit_message_text(
+            "🪞 Зеркала — цвет покрытия:",
+            reply_markup=options_keyboard("mirrors", MIRRORS_OPTIONS, sel["mirrors"]),
+        )
+    elif data == "cat_handles":
+        await query.edit_message_text(
+            "🚪 Ручки дверей — цвет покрытия:",
+            reply_markup=options_keyboard("handles", HANDLES_OPTIONS, sel["handles"]),
+        )
+    elif data == "cat_roof":
+        await query.edit_message_text(
+            "🖤 Крыша — цвет покрытия:",
+            reply_markup=options_keyboard("roof", ROOF_OPTIONS, sel["roof"]),
         )
     elif data == "cat_bodykit":
         await query.edit_message_text(
@@ -627,6 +701,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             f"🌊 Боковые: {SIDEGLASS_OPTIONS[sel['sideglass']]}\n"
             f"💡 Оптика: {OPTICS_OPTIONS[sel['optics']]}\n"
             f"⚫ Антихром: {ANTICHROME_OPTIONS[sel['antichrome']]}\n"
+            f"🪞 Зеркала: {MIRRORS_OPTIONS[sel['mirrors']]}\n"
+            f"🚪 Ручки: {HANDLES_OPTIONS[sel['handles']]}\n"
+            f"🖤 Крыша: {ROOF_OPTIONS[sel['roof']]}\n"
             f"🏎 Обвес: {BODYKIT_OPTIONS[sel['bodykit']]}\n"
             f"✨ Декор: {DECOR_OPTIONS[sel['decor']]}\n"
             f"📷 Ракурс: {ANGLE_OPTIONS[sel['angle']]}\n"
@@ -640,6 +717,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             f"🔵 {WINDSHIELD_OPTIONS[sel['windshield']]}  •  🌊 {SIDEGLASS_OPTIONS[sel['sideglass']]}\n"
             f"📷 {ANGLE_OPTIONS[sel['angle']]}\n"
             f"💡 {OPTICS_OPTIONS[sel['optics']]}  •  ⚫ {ANTICHROME_OPTIONS[sel['antichrome']]}\n"
+            f"🪞 {MIRRORS_OPTIONS[sel['mirrors']]}  •  🚪 {HANDLES_OPTIONS[sel['handles']]}  •  🖤 {ROOF_OPTIONS[sel['roof']]}\n"
             f"🏎 {BODYKIT_OPTIONS[sel['bodykit']]}\n"
             f"✨ {DECOR_OPTIONS[sel['decor']]}\n\n"
             f"Осталось генераций сегодня: {remaining} из {MAX_GENERATIONS}"
@@ -658,11 +736,16 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
 
 
+async def cmd_chatid(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.message.reply_text(f"Chat ID: `{update.effective_chat.id}`", parse_mode="Markdown")
+
+
 # ── Запуск ────────────────────────────────────────────────────────────────────
 
 def main() -> None:
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("chatid", cmd_chatid))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(CallbackQueryHandler(handle_callback))
     logger.info("Бот запущен")
