@@ -4,6 +4,7 @@ import base64
 import json
 import logging
 from datetime import date
+from urllib.parse import quote
 from PIL import Image, ImageDraw, ImageFont
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice
@@ -876,10 +877,11 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             f"(бесплатных: {info_after['free_left']}, бонусных: {info_after['bonus']})"
         )
 
-        share_text = f"Смотри как я изменил свою машину! Попробуй сам бесплатно → https://t.me/{BOT_USERNAME}"
+        share_text = quote("Смотри как я изменил свою машину! Попробуй сам бесплатно 👇")
+        ref_url = quote(f"https://t.me/{BOT_USERNAME}?start=ref_{user_id}")
         result_keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("🚗 Получить консультацию в Найскар Центр по внешнему виду", url="https://t.me/nicecar_center")],
-            [InlineKeyboardButton("🚀 Поделиться с другом", url=f"https://t.me/share/url?url=https://t.me/{BOT_USERNAME}&text={share_text}")],
+            [InlineKeyboardButton("🚀 Поделиться с другом (+3 генерации)", url=f"https://t.me/share/url?url={ref_url}&text={share_text}")],
             [InlineKeyboardButton("🔄 Изменить параметры", callback_data="back_main")],
         ])
 
