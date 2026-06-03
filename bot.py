@@ -66,6 +66,7 @@ BODY_OPTIONS = {
     "purple":    "Фиолетовый",
     "beige":     "Бежевый",
     "brown":     "Коричневый",
+    "pink":      "Розовый",
 }
 
 FINISH_OPTIONS = {
@@ -197,6 +198,7 @@ BODY_EN = {
     "purple":    "purple",
     "beige":     "beige",
     "brown":     "brown",
+    "pink":      "pink",
 }
 
 FINISH_EN = {
