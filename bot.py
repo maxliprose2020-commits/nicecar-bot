@@ -44,8 +44,9 @@ PURCHASES_FILE = "purchases.json"
 MAX_GENERATIONS = 5
 
 STARS_PACKAGES = [
-    {"stars": 50,  "generations": 20, "payload": "buy_20", "label": "20 генераций — 50 ⭐"},
-    {"stars": 100, "generations": 50, "payload": "buy_50", "label": "50 генераций — 100 ⭐"},
+    {"stars": 200, "generations": 5,  "payload": "buy_5",  "label": "5 генераций — 200 ⭐"},
+    {"stars": 350, "generations": 10, "payload": "buy_10", "label": "10 генераций — 350 ⭐"},
+    {"stars": 600, "generations": 20, "payload": "buy_20", "label": "20 генераций — 600 ⭐"},
 ]
 
 # ── Варианты на русском ────────────────────────────────────────────────────────
@@ -335,6 +336,7 @@ DEFAULT_SELECTIONS = {
 
 # user_id → {"photo_id": str | None, "selections": dict}
 user_states: dict[int, dict] = {}
+admin_state: dict[int, str] = {}
 
 
 # ── Водяной знак ──────────────────────────────────────────────────────────────
@@ -833,8 +835,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await query.edit_message_text(
                 f"Ты использовал все {MAX_GENERATIONS} бесплатных генераций на сегодня 🎨\n\n"
                 f"Хочешь ещё?\n\n"
-                f"⭐ 20 генераций за 50 Stars\n"
-                f"⭐ 50 генераций за 100 Stars\n\n"
+                f"⭐ 5 генераций — 200 Stars\n"
+                f"⭐ 10 генераций — 350 Stars\n"
+                f"⭐ 20 генераций — 600 Stars\n\n"
                 f"Или пригласи друга и получи +3 генерации бесплатно:\n{ref_link}",
                 reply_markup=buy_keyboard(),
             )
@@ -944,6 +947,48 @@ async def handle_successful_payment(update: Update, context: ContextTypes.DEFAUL
     )
 
 
+async def cmd_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.effective_user.id != ADMIN_ID:
+        return
+    admin_state[ADMIN_ID] = "awaiting_broadcast"
+    await update.message.reply_text(
+        "📢 Введи текст рассылки.\n\n"
+        "Можно использовать *жирный*, _курсив_, ссылки.\n"
+        "Для отмены напиши /cancel"
+    )
+
+
+async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.effective_user.id != ADMIN_ID:
+        return
+    admin_state.pop(ADMIN_ID, None)
+    await update.message.reply_text("Отменено.")
+
+
+async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID or admin_state.get(ADMIN_ID) != "awaiting_broadcast":
+        return
+    admin_state.pop(ADMIN_ID, None)
+    text = update.message.text
+    users = _load(USERS_FILE)
+    total = len(users)
+    sent = 0
+    failed = 0
+    await update.message.reply_text(f"⏳ Начинаю рассылку {total} пользователям…")
+    for uid in users:
+        try:
+            await context.bot.send_message(chat_id=int(uid), text=text, parse_mode="Markdown")
+            sent += 1
+        except Exception:
+            failed += 1
+    await update.message.reply_text(
+        f"✅ Рассылка завершена!\n"
+        f"Отправлено: {sent}\n"
+        f"Не доставлено: {failed} (заблокировали бота)"
+    )
+
+
 async def cmd_chatid(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(f"Chat ID: `{update.effective_chat.id}`", parse_mode="Markdown")
 
@@ -955,10 +1000,13 @@ def main() -> None:
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("referral", cmd_referral))
     app.add_handler(CommandHandler("stats", cmd_stats))
+    app.add_handler(CommandHandler("broadcast", cmd_broadcast))
+    app.add_handler(CommandHandler("cancel", cmd_cancel))
     app.add_handler(CommandHandler("chatid", cmd_chatid))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(PreCheckoutQueryHandler(handle_pre_checkout))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, handle_successful_payment))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_handler(CallbackQueryHandler(handle_callback))
     logger.info("Бот запущен")
     app.run_polling(drop_pending_updates=True)
