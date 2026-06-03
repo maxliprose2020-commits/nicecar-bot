@@ -335,40 +335,62 @@ user_states: dict[int, dict] = {}
 
 # ── Водяной знак ──────────────────────────────────────────────────────────────
 
+LOGO_PATH = "logo.png"
+
 def add_watermark(image_bytes: io.BytesIO) -> io.BytesIO:
     img = Image.open(image_bytes).convert("RGBA")
-    overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
-    draw = ImageDraw.Draw(overlay)
 
-    text = "Найскар Центр"
-    font_size = max(28, img.width // 22)
-    font = None
-    for path in [
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
-        "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
-    ]:
-        try:
-            font = ImageFont.truetype(path, font_size)
-            break
-        except Exception:
-            pass
-    if font is None:
-        font = ImageFont.load_default()
+    if os.path.exists(LOGO_PATH):
+        logo = Image.open(LOGO_PATH).convert("RGBA")
+        # Делаем белый фон прозрачным
+        data = logo.getdata()
+        new_data = []
+        for r, g, b, a in data:
+            if r > 220 and g > 220 and b > 220:
+                new_data.append((r, g, b, 0))
+            else:
+                new_data.append((r, g, b, a))
+        logo.putdata(new_data)
+        # Размер: 1/4 ширины изображения
+        logo_w = img.width // 4
+        logo_h = int(logo.height * logo_w / logo.width)
+        logo = logo.resize((logo_w, logo_h), Image.LANCZOS)
+        # Полупрозрачность 80%
+        r, g, b, a = logo.split()
+        a = a.point(lambda x: int(x * 0.80))
+        logo = Image.merge("RGBA", (r, g, b, a))
+        pad = 16
+        x = img.width - logo_w - pad
+        y = img.height - logo_h - pad
+        img.paste(logo, (x, y), logo)
+    else:
+        # Фолбэк — текст если лого нет
+        overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
+        draw = ImageDraw.Draw(overlay)
+        text = "NiceCar Center"
+        font_size = max(28, img.width // 22)
+        font = None
+        for path in [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+        ]:
+            try:
+                font = ImageFont.truetype(path, font_size)
+                break
+            except Exception:
+                pass
+        if font is None:
+            font = ImageFont.load_default()
+        bbox = draw.textbbox((0, 0), text, font=font)
+        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        pad = 16
+        x, y = img.width - tw - pad, img.height - th - pad
+        draw.text((x + 1, y + 1), text, font=font, fill=(0, 0, 0, 120))
+        draw.text((x, y), text, font=font, fill=(255, 255, 255, 200))
+        img = Image.alpha_composite(img, overlay)
 
-    bbox = draw.textbbox((0, 0), text, font=font)
-    tw = bbox[2] - bbox[0]
-    th = bbox[3] - bbox[1]
-    pad = 16
-    x = img.width - tw - pad
-    y = img.height - th - pad
-
-    draw.text((x + 1, y + 1), text, font=font, fill=(0, 0, 0, 120))
-    draw.text((x, y), text, font=font, fill=(255, 255, 255, 200))
-
-    combined = Image.alpha_composite(img, overlay)
     out = io.BytesIO()
-    combined.convert("RGB").save(out, format="JPEG", quality=95)
+    img.convert("RGB").save(out, format="JPEG", quality=95)
     out.seek(0)
     return out
 
