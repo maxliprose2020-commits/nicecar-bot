@@ -673,8 +673,9 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
 
     await update.message.reply_text(
-        "👋 Привет! Я помогу тебе представить, как будет выглядеть твой автомобиль "
-        "после тюнинга в Найскар Центр.\n\n"
+        "👋 Привет! За пару кликов покажу как будет выглядеть твоя машина "
+        "после тюнинга — меняй цвет, диски, тонировку и обвес прямо здесь.\n\n"
+        "Это бесплатно и работает на AI 🤖\n\n"
         "📸 Загрузи фото своей машины — и начнём!"
     )
 
@@ -910,7 +911,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         share_text = quote("Смотри как я изменил свою машину! Попробуй сам бесплатно 👇")
         ref_url = quote(f"https://t.me/{BOT_USERNAME}?start=ref_{user_id}")
         result_keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🚗 Получить консультацию в Найскар Центр по внешнему виду", url="https://t.me/nicecar_center")],
+            [InlineKeyboardButton("💬 Узнать стоимость тюнинга", url="https://t.me/nicecar_center")],
             [InlineKeyboardButton("🚀 Поделиться с другом (+3 генерации)", url=f"https://t.me/share/url?url={ref_url}&text={share_text}")],
             [InlineKeyboardButton("🔄 Изменить параметры", callback_data="back_main")],
         ])
