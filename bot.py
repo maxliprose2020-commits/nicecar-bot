@@ -364,8 +364,8 @@ def add_watermark(image_bytes: io.BytesIO) -> io.BytesIO:
         a = a.point(lambda x: int(x * 0.80))
         logo = Image.merge("RGBA", (r, g, b, a))
         pad = 16
-        x = img.width - logo_w - pad
-        y = img.height - logo_h - pad
+        x = pad
+        y = pad
         img.paste(logo, (x, y), logo)
     else:
         # Фолбэк — текст если лого нет
