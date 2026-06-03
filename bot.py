@@ -77,6 +77,7 @@ FINISH_OPTIONS = {
     "chrome":      "Хром",
     "camouflage":  "Камуфляж",
     "psychedelic": "Психоделика",
+    "pearl":       "Жемчужный хамелеон",
 }
 
 WHEELS_OPTIONS = {
@@ -209,6 +210,7 @@ FINISH_EN = {
     "chrome":      "chrome vinyl wrap",
     "camouflage":  "camouflage vinyl wrap",
     "psychedelic": "psychedelic multicolor holographic vinyl wrap with vivid neon patterns",
+    "pearl":       "pearlescent white chameleon vinyl wrap with purple and pink color-shifting iridescent shimmer",
 }
 
 WHEELS_EN = {
@@ -582,7 +584,7 @@ def buy_keyboard() -> InlineKeyboardMarkup:
 def build_prompt(selections: dict) -> str:
     finish = selections["finish"]
     color = BODY_EN[selections["body"]]
-    if finish in ("carbon", "chrome", "camouflage", "psychedelic"):
+    if finish in ("carbon", "chrome", "camouflage", "psychedelic", "pearl"):
         body = FINISH_EN[finish]
     elif selections["body"] == "original":
         body = f"{FINISH_EN[finish]} keeping the original color"
