@@ -818,6 +818,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             title="Генерации визуализации",
             description=f"{pkg['generations']} генераций тюнинга автомобиля в Найскар Центр",
             payload=pkg["payload"],
+            provider_token="",
             currency="XTR",
             prices=[LabeledPrice(label=pkg["label"], amount=pkg["stars"])],
         )
