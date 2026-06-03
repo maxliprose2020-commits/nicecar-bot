@@ -6,12 +6,13 @@ import logging
 from datetime import date
 from PIL import Image, ImageDraw, ImageFont
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice
 from telegram.ext import (
     Application,
     CommandHandler,
     MessageHandler,
     CallbackQueryHandler,
+    PreCheckoutQueryHandler,
     filters,
     ContextTypes,
 )
@@ -26,6 +27,9 @@ logger = logging.getLogger(__name__)
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
 NOTIFY_TOKEN = os.environ.get("NOTIFY_TOKEN")
+OWNER_CHAT_ID = int(os.environ.get("OWNER_CHAT_ID", "862676483"))
+ADMIN_ID = int(os.environ.get("ADMIN_ID", "862676483"))
+BOT_USERNAME = os.environ.get("BOT_USERNAME", "nicecar_tuning_bot")
 
 openai_client = OpenAI(api_key=OPENAI_API_KEY)
 
@@ -33,8 +37,15 @@ from telegram import Bot as TelegramBot
 _notify_bot = TelegramBot(token=NOTIFY_TOKEN) if NOTIFY_TOKEN else None
 
 COUNTERS_FILE = "counters.json"
+USERS_FILE = "users.json"
+REFERRALS_FILE = "referrals.json"
+PURCHASES_FILE = "purchases.json"
 MAX_GENERATIONS = 5
-OWNER_CHAT_ID = int(os.environ.get("OWNER_CHAT_ID", "862676483"))
+
+STARS_PACKAGES = [
+    {"stars": 50,  "generations": 20, "payload": "buy_20", "label": "20 генераций — 50 ⭐"},
+    {"stars": 100, "generations": 50, "payload": "buy_50", "label": "50 генераций — 100 ⭐"},
+]
 
 # ── Варианты на русском ────────────────────────────────────────────────────────
 
@@ -361,107 +372,165 @@ def add_watermark(image_bytes: io.BytesIO) -> io.BytesIO:
     return out
 
 
-# ── Счётчики генераций ─────────────────────────────────────────────────────────
+# ── Хранилище данных ──────────────────────────────────────────────────────────
 
-def load_counters() -> dict:
-    if os.path.exists(COUNTERS_FILE):
-        with open(COUNTERS_FILE, "r", encoding="utf-8") as f:
+def _load(path: str) -> dict:
+    if os.path.exists(path):
+        with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
     return {}
 
+def _save(path: str, data: dict) -> None:
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False)
 
-def save_counters(counters: dict) -> None:
-    with open(COUNTERS_FILE, "w", encoding="utf-8") as f:
-        json.dump(counters, f)
 
+# ── Пользователи ──────────────────────────────────────────────────────────────
 
-def get_user_generations(user_id: int) -> int:
-    counters = load_counters()
-    today = str(date.today())
+def register_user(user_id: int, user) -> bool:
+    users = _load(USERS_FILE)
     key = str(user_id)
-    if key not in counters or counters[key]["date"] != today:
-        return 0
-    return counters[key]["count"]
+    if key in users:
+        return False
+    users[key] = {
+        "name": user.full_name,
+        "username": user.username or "",
+        "joined": str(date.today()),
+    }
+    _save(USERS_FILE, users)
+    return True
 
+def get_user_name(user_id: int) -> str:
+    users = _load(USERS_FILE)
+    u = users.get(str(user_id), {})
+    name = u.get("name", str(user_id))
+    username = u.get("username", "")
+    return f"{name} @{username}" if username else name
 
-def increment_user_generations(user_id: int) -> None:
-    counters = load_counters()
+def count_users() -> tuple:
+    users = _load(USERS_FILE)
     today = str(date.today())
+    return len(users), sum(1 for u in users.values() if u.get("joined") == today)
+
+
+# ── Счётчики генераций ────────────────────────────────────────────────────────
+
+def _ensure(counters: dict, key: str) -> None:
+    today = str(date.today())
+    if key not in counters:
+        counters[key] = {"date": today, "daily_count": 0, "bonus": 0, "total_ever": 0}
+    elif counters[key].get("date") != today:
+        counters[key]["date"] = today
+        counters[key]["daily_count"] = 0
+    for f in ("bonus", "total_ever"):
+        if f not in counters[key]:
+            counters[key][f] = 0
+
+def get_generation_info(user_id: int) -> dict:
+    counters = _load(COUNTERS_FILE)
     key = str(user_id)
-    if key not in counters or counters[key]["date"] != today:
-        counters[key] = {"date": today, "count": 0}
-    counters[key]["count"] += 1
-    save_counters(counters)
+    _ensure(counters, key)
+    daily = counters[key]["daily_count"]
+    bonus = counters[key]["bonus"]
+    free_left = max(0, MAX_GENERATIONS - daily)
+    return {"daily_used": daily, "bonus": bonus, "free_left": free_left, "total_left": free_left + bonus}
+
+def use_generation(user_id: int) -> None:
+    counters = _load(COUNTERS_FILE)
+    key = str(user_id)
+    _ensure(counters, key)
+    if counters[key]["daily_count"] < MAX_GENERATIONS:
+        counters[key]["daily_count"] += 1
+    else:
+        counters[key]["bonus"] = max(0, counters[key]["bonus"] - 1)
+    counters[key]["total_ever"] += 1
+    _save(COUNTERS_FILE, counters)
+
+def add_bonus(user_id: int, amount: int) -> None:
+    counters = _load(COUNTERS_FILE)
+    key = str(user_id)
+    _ensure(counters, key)
+    counters[key]["bonus"] += amount
+    _save(COUNTERS_FILE, counters)
+
+def get_stats_counters() -> tuple:
+    counters = _load(COUNTERS_FILE)
+    today = str(date.today())
+    total_ever = sum(c.get("total_ever", 0) for c in counters.values())
+    today_count = sum(c.get("daily_count", 0) for c in counters.values() if c.get("date") == today)
+    exhausted = sum(
+        1 for c in counters.values()
+        if c.get("date") == today and c.get("daily_count", 0) >= MAX_GENERATIONS and c.get("bonus", 0) == 0
+    )
+    top = sorted(
+        [(k, c.get("total_ever", 0)) for k, c in counters.items()],
+        key=lambda x: x[1], reverse=True
+    )[:5]
+    return total_ever, today_count, exhausted, top
+
+
+# ── Рефералы ─────────────────────────────────────────────────────────────────
+
+def process_referral(new_user_id: int, referrer_id: int) -> None:
+    if new_user_id == referrer_id:
+        return
+    refs = _load(REFERRALS_FILE)
+    key = str(referrer_id)
+    new_key = str(new_user_id)
+    for r in refs.values():
+        if new_key in r.get("invited", []):
+            return
+    if key not in refs:
+        refs[key] = {"invited": [], "bonus_earned": 0}
+    refs[key]["invited"].append(new_key)
+    refs[key]["bonus_earned"] += 3
+    _save(REFERRALS_FILE, refs)
+    add_bonus(referrer_id, 3)
+    add_bonus(new_user_id, 2)
+
+def get_referral_stats(user_id: int) -> dict:
+    refs = _load(REFERRALS_FILE)
+    r = refs.get(str(user_id), {})
+    return {"invited": len(r.get("invited", [])), "bonus_earned": r.get("bonus_earned", 0)}
+
+
+# ── Покупки (Stars) ───────────────────────────────────────────────────────────
+
+def record_purchase(user_id: int, stars: int, generations: int) -> None:
+    purchases = _load(PURCHASES_FILE)
+    today = str(date.today())
+    if today not in purchases:
+        purchases[today] = []
+    purchases[today].append({"user_id": user_id, "stars": stars, "generations": generations})
+    _save(PURCHASES_FILE, purchases)
+
+def get_purchase_stats() -> tuple:
+    purchases = _load(PURCHASES_FILE)
+    total_p = sum(len(v) for v in purchases.values())
+    total_s = sum(p["stars"] for v in purchases.values() for p in v)
+    return total_p, total_s
 
 
 # ── Клавиатуры ────────────────────────────────────────────────────────────────
 
 def main_menu(selections: dict) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton(
-            f"🎨 Цвет кузова: {BODY_OPTIONS[selections['body']]}",
-            callback_data="cat_body",
-        )],
-        [InlineKeyboardButton(
-            f"🔲 Покрытие: {FINISH_OPTIONS[selections['finish']]}",
-            callback_data="cat_finish",
-        )],
-        [InlineKeyboardButton(
-            f"💿 Диски: {WHEELS_OPTIONS[selections['wheels']]}",
-            callback_data="cat_wheels",
-        )],
-        [InlineKeyboardButton(
-            f"⚙️ Радиус: {WHEELS_SIZE_OPTIONS[selections['wheels_size']]}",
-            callback_data="cat_wheels_size",
-        )],
-        [InlineKeyboardButton(
-            f"🪟 Тонировка задних: {TINT_OPTIONS[selections['tint']]}",
-            callback_data="cat_tint",
-        )],
-        [InlineKeyboardButton(
-            f"🔵 Лобовое стекло: {WINDSHIELD_OPTIONS[selections['windshield']]}",
-            callback_data="cat_windshield",
-        )],
-        [InlineKeyboardButton(
-            f"🌊 Боковые передние: {SIDEGLASS_OPTIONS[selections['sideglass']]}",
-            callback_data="cat_sideglass",
-        )],
-        [InlineKeyboardButton(
-            f"💡 Оптика: {OPTICS_OPTIONS[selections['optics']]}",
-            callback_data="cat_optics",
-        )],
-        [InlineKeyboardButton(
-            f"⚫ Антихром: {ANTICHROME_OPTIONS[selections['antichrome']]}",
-            callback_data="cat_antichrome",
-        )],
-        [InlineKeyboardButton(
-            f"🪞 Зеркала: {MIRRORS_OPTIONS[selections['mirrors']]}",
-            callback_data="cat_mirrors",
-        )],
-        [InlineKeyboardButton(
-            f"🚪 Ручки дверей: {HANDLES_OPTIONS[selections['handles']]}",
-            callback_data="cat_handles",
-        )],
-        [InlineKeyboardButton(
-            f"🖤 Крыша: {ROOF_OPTIONS[selections['roof']]}",
-            callback_data="cat_roof",
-        )],
-        [InlineKeyboardButton(
-            f"🏎 Обвес: {BODYKIT_OPTIONS[selections['bodykit']]}",
-            callback_data="cat_bodykit",
-        )],
-        [InlineKeyboardButton(
-            f"✨ Декор: {DECOR_OPTIONS[selections['decor']]}",
-            callback_data="cat_decor",
-        )],
-        [InlineKeyboardButton(
-            f"📷 Ракурс: {ANGLE_OPTIONS[selections['angle']]}",
-            callback_data="cat_angle",
-        )],
-        [InlineKeyboardButton(
-            f"🏙 Фон: {BACKGROUND_OPTIONS[selections['background']]}",
-            callback_data="cat_background",
-        )],
+        [InlineKeyboardButton(f"🎨 Цвет кузова: {BODY_OPTIONS[selections['body']]}", callback_data="cat_body")],
+        [InlineKeyboardButton(f"🔲 Покрытие: {FINISH_OPTIONS[selections['finish']]}", callback_data="cat_finish")],
+        [InlineKeyboardButton(f"💿 Диски: {WHEELS_OPTIONS[selections['wheels']]}", callback_data="cat_wheels")],
+        [InlineKeyboardButton(f"⚙️ Радиус: {WHEELS_SIZE_OPTIONS[selections['wheels_size']]}", callback_data="cat_wheels_size")],
+        [InlineKeyboardButton(f"🪟 Тонировка задних: {TINT_OPTIONS[selections['tint']]}", callback_data="cat_tint")],
+        [InlineKeyboardButton(f"🔵 Лобовое стекло: {WINDSHIELD_OPTIONS[selections['windshield']]}", callback_data="cat_windshield")],
+        [InlineKeyboardButton(f"🌊 Боковые передние: {SIDEGLASS_OPTIONS[selections['sideglass']]}", callback_data="cat_sideglass")],
+        [InlineKeyboardButton(f"💡 Оптика: {OPTICS_OPTIONS[selections['optics']]}", callback_data="cat_optics")],
+        [InlineKeyboardButton(f"⚫ Антихром: {ANTICHROME_OPTIONS[selections['antichrome']]}", callback_data="cat_antichrome")],
+        [InlineKeyboardButton(f"🪞 Зеркала: {MIRRORS_OPTIONS[selections['mirrors']]}", callback_data="cat_mirrors")],
+        [InlineKeyboardButton(f"🚪 Ручки дверей: {HANDLES_OPTIONS[selections['handles']]}", callback_data="cat_handles")],
+        [InlineKeyboardButton(f"🖤 Крыша: {ROOF_OPTIONS[selections['roof']]}", callback_data="cat_roof")],
+        [InlineKeyboardButton(f"🏎 Обвес: {BODYKIT_OPTIONS[selections['bodykit']]}", callback_data="cat_bodykit")],
+        [InlineKeyboardButton(f"✨ Декор: {DECOR_OPTIONS[selections['decor']]}", callback_data="cat_decor")],
+        [InlineKeyboardButton(f"📷 Ракурс: {ANGLE_OPTIONS[selections['angle']]}", callback_data="cat_angle")],
+        [InlineKeyboardButton(f"🏙 Фон: {BACKGROUND_OPTIONS[selections['background']]}", callback_data="cat_background")],
         [InlineKeyboardButton("🎨 Сгенерировать визуализацию", callback_data="generate")],
     ])
 
@@ -472,6 +541,14 @@ def options_keyboard(category: str, options: dict, current: str) -> InlineKeyboa
         prefix = "✅ " if key == current else ""
         rows.append([InlineKeyboardButton(f"{prefix}{name}", callback_data=f"sel|{category}|{key}")])
     rows.append([InlineKeyboardButton("◀️ Назад", callback_data="back_main")])
+    return InlineKeyboardMarkup(rows)
+
+
+def buy_keyboard() -> InlineKeyboardMarkup:
+    rows = []
+    for pkg in STARS_PACKAGES:
+        rows.append([InlineKeyboardButton(pkg["label"], callback_data=f"buy|{pkg['payload']}")])
+    rows.append([InlineKeyboardButton("🔗 Пригласить друга (+3 генерации)", callback_data="show_referral")])
     return InlineKeyboardMarkup(rows)
 
 
@@ -498,12 +575,10 @@ def build_prompt(selections: dict) -> str:
     roof = ROOF_EN[selections["roof"]]
     decor = DECOR_EN[selections["decor"]]
     background = BACKGROUND_EN[selections["background"]]
-
     optics = OPTICS_EN[selections["optics"]]
     bodykit = BODYKIT_EN[selections["bodykit"]]
     extras = [x for x in [optics, antichrome, mirrors, handles, roof, bodykit, decor] if x]
     extras_text = (", " + ", ".join(extras)) if extras else ""
-
     angle = ANGLE_EN[selections["angle"]]
     return (
         f"Professional automotive photo retouching. "
@@ -536,23 +611,81 @@ async def notify_owner(context, text: str) -> None:
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user_id = update.effective_user.id
-    is_new = user_id not in user_states
+    user = update.effective_user
+    user_id = user.id
+    is_new = register_user(user_id, user)
+
     user_states[user_id] = {
         "photo_id": None,
         "selections": DEFAULT_SELECTIONS.copy(),
     }
+
     if is_new:
+        # Обработка реферала
+        if context.args:
+            arg = context.args[0]
+            if arg.startswith("ref_"):
+                try:
+                    referrer_id = int(arg[4:])
+                    process_referral(user_id, referrer_id)
+                    gen_info = get_generation_info(user_id)
+                    await update.message.reply_text(
+                        f"🎁 Ты пришёл по реферальной ссылке — тебе начислено "
+                        f"+{gen_info['bonus']} бонусных генераций!"
+                    )
+                except ValueError:
+                    pass
+
         await notify_owner(
             context,
             f"👤 Новый пользователь запустил бота:\n"
-            f"{user_link(update.effective_user)}\n"
+            f"{user_link(user)}\n"
             f"ID: {user_id}"
         )
+
     await update.message.reply_text(
         "👋 Привет! Я помогу тебе представить, как будет выглядеть твой автомобиль "
         "после тюнинга в Найскар Центр.\n\n"
         "📸 Загрузи фото своей машины — и начнём!"
+    )
+
+
+async def cmd_referral(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+    ref_link = f"https://t.me/{BOT_USERNAME}?start=ref_{user_id}"
+    stats = get_referral_stats(user_id)
+    await update.message.reply_text(
+        f"🔗 Твоя реферальная ссылка:\n{ref_link}\n\n"
+        f"👥 Приглашено друзей: {stats['invited']}\n"
+        f"⭐ Бонусных генераций заработано: {stats['bonus_earned']}\n\n"
+        f"За каждого приглашённого друга:\n"
+        f"• Тебе: +3 генерации\n"
+        f"• Другу: +2 генерации"
+    )
+
+
+async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.effective_user.id != ADMIN_ID:
+        return
+    total_users, new_today = count_users()
+    total_gen, today_gen, exhausted, top = get_stats_counters()
+    total_purchases, total_stars = get_purchase_stats()
+
+    top_lines = []
+    for uid, count in top:
+        name = get_user_name(int(uid))
+        top_lines.append(f"  {name}: {count} генераций")
+    top_text = "\n".join(top_lines) if top_lines else "  —"
+
+    await update.message.reply_text(
+        f"📊 Статистика бота\n\n"
+        f"👥 Всего пользователей: {total_users}\n"
+        f"🆕 Новых сегодня: {new_today}\n\n"
+        f"🎨 Всего генераций: {total_gen}\n"
+        f"📅 Генераций сегодня: {today_gen}\n"
+        f"🚫 Исчерпали лимит сегодня: {exhausted}\n\n"
+        f"⭐ Покупок Stars: {total_purchases} (итого {total_stars} Stars)\n\n"
+        f"🏆 Топ-5 активных:\n{top_text}"
     )
 
 
@@ -564,10 +697,11 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             "selections": DEFAULT_SELECTIONS.copy(),
         }
     user_states[user_id]["photo_id"] = update.message.photo[-1].file_id
-    remaining = MAX_GENERATIONS - get_user_generations(user_id)
+    info = get_generation_info(user_id)
     await update.message.reply_text(
         f"✅ Фото получено!\n"
-        f"Осталось генераций сегодня: {remaining} из {MAX_GENERATIONS}\n\n"
+        f"Доступно генераций: {info['total_left']} "
+        f"(бесплатных: {info['free_left']}, бонусных: {info['bonus']})\n\n"
         "Выбери услуги и нажми 🎨 Сгенерировать визуализацию:",
         reply_markup=main_menu(user_states[user_id]["selections"]),
     )
@@ -587,85 +721,37 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     sel = state["selections"]
 
     if data == "cat_body":
-        await query.edit_message_text(
-            "🎨 Выбери цвет кузова:",
-            reply_markup=options_keyboard("body", BODY_OPTIONS, sel["body"]),
-        )
+        await query.edit_message_text("🎨 Выбери цвет кузова:", reply_markup=options_keyboard("body", BODY_OPTIONS, sel["body"]))
     elif data == "cat_finish":
-        await query.edit_message_text(
-            "🔲 Выбери тип покрытия:",
-            reply_markup=options_keyboard("finish", FINISH_OPTIONS, sel["finish"]),
-        )
+        await query.edit_message_text("🔲 Выбери тип покрытия:", reply_markup=options_keyboard("finish", FINISH_OPTIONS, sel["finish"]))
     elif data == "cat_wheels":
-        await query.edit_message_text(
-            "💿 Выбери цвет дисков:",
-            reply_markup=options_keyboard("wheels", WHEELS_OPTIONS, sel["wheels"]),
-        )
+        await query.edit_message_text("💿 Выбери цвет дисков:", reply_markup=options_keyboard("wheels", WHEELS_OPTIONS, sel["wheels"]))
     elif data == "cat_wheels_size":
-        await query.edit_message_text(
-            "⚙️ Выбери радиус дисков:",
-            reply_markup=options_keyboard("wheels_size", WHEELS_SIZE_OPTIONS, sel["wheels_size"]),
-        )
+        await query.edit_message_text("⚙️ Выбери радиус дисков:", reply_markup=options_keyboard("wheels_size", WHEELS_SIZE_OPTIONS, sel["wheels_size"]))
     elif data == "cat_tint":
-        await query.edit_message_text(
-            "🪟 Тонировка задних стёкол:",
-            reply_markup=options_keyboard("tint", TINT_OPTIONS, sel["tint"]),
-        )
+        await query.edit_message_text("🪟 Тонировка задних стёкол:", reply_markup=options_keyboard("tint", TINT_OPTIONS, sel["tint"]))
     elif data == "cat_windshield":
-        await query.edit_message_text(
-            "🔵 Лобовое стекло — выбери плёнку:",
-            reply_markup=options_keyboard("windshield", WINDSHIELD_OPTIONS, sel["windshield"]),
-        )
+        await query.edit_message_text("🔵 Лобовое стекло — выбери плёнку:", reply_markup=options_keyboard("windshield", WINDSHIELD_OPTIONS, sel["windshield"]))
     elif data == "cat_sideglass":
-        await query.edit_message_text(
-            "🌊 Передние боковые стёкла — выбери плёнку:",
-            reply_markup=options_keyboard("sideglass", SIDEGLASS_OPTIONS, sel["sideglass"]),
-        )
+        await query.edit_message_text("🌊 Передние боковые стёкла — выбери плёнку:", reply_markup=options_keyboard("sideglass", SIDEGLASS_OPTIONS, sel["sideglass"]))
     elif data == "cat_optics":
-        await query.edit_message_text(
-            "💡 Тонировка оптики (фары и фонари):",
-            reply_markup=options_keyboard("optics", OPTICS_OPTIONS, sel["optics"]),
-        )
+        await query.edit_message_text("💡 Тонировка оптики (фары и фонари):", reply_markup=options_keyboard("optics", OPTICS_OPTIONS, sel["optics"]))
     elif data == "cat_antichrome":
-        await query.edit_message_text(
-            "⚫ Антихром — оклейка хромированных деталей кузова:",
-            reply_markup=options_keyboard("antichrome", ANTICHROME_OPTIONS, sel["antichrome"]),
-        )
+        await query.edit_message_text("⚫ Антихром — оклейка хромированных деталей кузова:", reply_markup=options_keyboard("antichrome", ANTICHROME_OPTIONS, sel["antichrome"]))
     elif data == "cat_mirrors":
-        await query.edit_message_text(
-            "🪞 Зеркала — цвет покрытия:",
-            reply_markup=options_keyboard("mirrors", MIRRORS_OPTIONS, sel["mirrors"]),
-        )
+        await query.edit_message_text("🪞 Зеркала — цвет покрытия:", reply_markup=options_keyboard("mirrors", MIRRORS_OPTIONS, sel["mirrors"]))
     elif data == "cat_handles":
-        await query.edit_message_text(
-            "🚪 Ручки дверей — цвет покрытия:",
-            reply_markup=options_keyboard("handles", HANDLES_OPTIONS, sel["handles"]),
-        )
+        await query.edit_message_text("🚪 Ручки дверей — цвет покрытия:", reply_markup=options_keyboard("handles", HANDLES_OPTIONS, sel["handles"]))
     elif data == "cat_roof":
-        await query.edit_message_text(
-            "🖤 Крыша — цвет покрытия:",
-            reply_markup=options_keyboard("roof", ROOF_OPTIONS, sel["roof"]),
-        )
+        await query.edit_message_text("🖤 Крыша — цвет покрытия:", reply_markup=options_keyboard("roof", ROOF_OPTIONS, sel["roof"]))
     elif data == "cat_bodykit":
-        await query.edit_message_text(
-            "🏎 Выбери обвес:",
-            reply_markup=options_keyboard("bodykit", BODYKIT_OPTIONS, sel["bodykit"]),
-        )
+        await query.edit_message_text("🏎 Выбери обвес:", reply_markup=options_keyboard("bodykit", BODYKIT_OPTIONS, sel["bodykit"]))
     elif data == "cat_decor":
-        await query.edit_message_text(
-            "✨ Декоративные элементы:",
-            reply_markup=options_keyboard("decor", DECOR_OPTIONS, sel["decor"]),
-        )
+        await query.edit_message_text("✨ Декоративные элементы:", reply_markup=options_keyboard("decor", DECOR_OPTIONS, sel["decor"]))
     elif data == "cat_angle":
-        await query.edit_message_text(
-            "📷 Выбери ракурс:",
-            reply_markup=options_keyboard("angle", ANGLE_OPTIONS, sel["angle"]),
-        )
+        await query.edit_message_text("📷 Выбери ракурс:", reply_markup=options_keyboard("angle", ANGLE_OPTIONS, sel["angle"]))
     elif data == "cat_background":
-        await query.edit_message_text(
-            "🏙 Выбери фон:",
-            reply_markup=options_keyboard("background", BACKGROUND_OPTIONS, sel["background"]),
-        )
+        await query.edit_message_text("🏙 Выбери фон:", reply_markup=options_keyboard("background", BACKGROUND_OPTIONS, sel["background"]))
     elif data.startswith("sel|"):
         _, category, key = data.split("|", 2)
         sel[category] = key
@@ -685,19 +771,44 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 "Выбери услуги и нажми 🎨 Сгенерировать визуализацию:",
                 reply_markup=main_menu(sel),
             )
+    elif data == "show_referral":
+        ref_link = f"https://t.me/{BOT_USERNAME}?start=ref_{user_id}"
+        stats = get_referral_stats(user_id)
+        await query.edit_message_text(
+            f"🔗 Твоя реферальная ссылка:\n{ref_link}\n\n"
+            f"👥 Приглашено: {stats['invited']}\n"
+            f"⭐ Бонусов заработано: {stats['bonus_earned']} генераций\n\n"
+            "За каждого друга — тебе +3, другу +2 генерации!",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="back_main")]]),
+        )
+    elif data.startswith("buy|"):
+        payload = data[4:]
+        pkg = next((p for p in STARS_PACKAGES if p["payload"] == payload), None)
+        if not pkg:
+            return
+        await context.bot.send_invoice(
+            chat_id=query.message.chat_id,
+            title="Генерации визуализации",
+            description=f"{pkg['generations']} генераций тюнинга автомобиля в Найскар Центр",
+            payload=pkg["payload"],
+            currency="XTR",
+            prices=[LabeledPrice(label=pkg["label"], amount=pkg["stars"])],
+        )
     elif data == "generate":
         if not state.get("photo_id"):
-            await query.edit_message_text(
-                "Сначала загрузи фото своей машины!",
-                reply_markup=main_menu(sel),
-            )
+            await query.edit_message_text("Сначала загрузи фото своей машины!", reply_markup=main_menu(sel))
             return
 
-        gens = get_user_generations(user_id)
-        if gens >= MAX_GENERATIONS:
+        info = get_generation_info(user_id)
+        if info["total_left"] <= 0:
+            ref_link = f"https://t.me/{BOT_USERNAME}?start=ref_{user_id}"
             await query.edit_message_text(
-                f"Ты использовал {MAX_GENERATIONS} бесплатных визуализаций на сегодня.\n\n"
-                "Напиши нам в @nicecar_center для получения дополнительных генераций 🚗"
+                f"Ты использовал все {MAX_GENERATIONS} бесплатных генераций на сегодня 🎨\n\n"
+                f"Хочешь ещё?\n\n"
+                f"⭐ 20 генераций за 50 Stars\n"
+                f"⭐ 50 генераций за 100 Stars\n\n"
+                f"Или пригласи друга и получи +3 генерации бесплатно:\n{ref_link}",
+                reply_markup=buy_keyboard(),
             )
             return
 
@@ -727,8 +838,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             )
             return
 
-        increment_user_generations(user_id)
-        remaining = MAX_GENERATIONS - get_user_generations(user_id)
+        use_generation(user_id)
+        info_after = get_generation_info(user_id)
 
         await notify_owner(
             context,
@@ -761,11 +872,14 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             f"🪞 {MIRRORS_OPTIONS[sel['mirrors']]}  •  🚪 {HANDLES_OPTIONS[sel['handles']]}  •  🖤 {ROOF_OPTIONS[sel['roof']]}\n"
             f"🏎 {BODYKIT_OPTIONS[sel['bodykit']]}\n"
             f"✨ {DECOR_OPTIONS[sel['decor']]}\n\n"
-            f"Осталось генераций сегодня: {remaining} из {MAX_GENERATIONS}"
+            f"Осталось генераций: {info_after['total_left']} "
+            f"(бесплатных: {info_after['free_left']}, бонусных: {info_after['bonus']})"
         )
 
+        share_text = f"Смотри как я изменил свою машину! Попробуй сам бесплатно → https://t.me/{BOT_USERNAME}"
         result_keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("🚗 Получить консультацию в Найскар Центр по внешнему виду", url="https://t.me/nicecar_center")],
+            [InlineKeyboardButton("🚀 Поделиться с другом", url=f"https://t.me/share/url?url=https://t.me/{BOT_USERNAME}&text={share_text}")],
             [InlineKeyboardButton("🔄 Изменить параметры", callback_data="back_main")],
         ])
 
@@ -777,6 +891,30 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
 
 
+async def handle_pre_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.pre_checkout_query.answer(ok=True)
+
+
+async def handle_successful_payment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+    payload = update.message.successful_payment.invoice_payload
+    pkg = next((p for p in STARS_PACKAGES if p["payload"] == payload), None)
+    if not pkg:
+        return
+    add_bonus(user_id, pkg["generations"])
+    record_purchase(user_id, pkg["stars"], pkg["generations"])
+    info = get_generation_info(user_id)
+    await update.message.reply_text(
+        f"✅ Оплата прошла! Начислено {pkg['generations']} генераций.\n"
+        f"Всего доступно: {info['total_left']} генераций."
+    )
+    await notify_owner(
+        context,
+        f"⭐ Покупка!\n{user_link(update.effective_user)}\n"
+        f"ID: {user_id}\n{pkg['stars']} Stars → {pkg['generations']} генераций"
+    )
+
+
 async def cmd_chatid(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(f"Chat ID: `{update.effective_chat.id}`", parse_mode="Markdown")
 
@@ -786,8 +924,12 @@ async def cmd_chatid(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 def main() -> None:
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("referral", cmd_referral))
+    app.add_handler(CommandHandler("stats", cmd_stats))
     app.add_handler(CommandHandler("chatid", cmd_chatid))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+    app.add_handler(PreCheckoutQueryHandler(handle_pre_checkout))
+    app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, handle_successful_payment))
     app.add_handler(CallbackQueryHandler(handle_callback))
     logger.info("Бот запущен")
     app.run_polling(drop_pending_updates=True)
