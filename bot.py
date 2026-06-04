@@ -1006,6 +1006,18 @@ async def handle_successful_payment(update: Update, context: ContextTypes.DEFAUL
         f"✅ Оплата прошла! Начислено {pkg['generations']} генераций.\n"
         f"Всего доступно: {info['total_left']} генераций."
     )
+    try:
+        await context.bot.send_message(
+            chat_id=OWNER_CHAT_ID,
+            text=(
+                f"⭐ Покупка!\n"
+                f"{user_link(update.effective_user)}\n"
+                f"ID: {user_id}\n"
+                f"{pkg['stars']} Stars → {pkg['generations']} генераций"
+            ),
+        )
+    except Exception as e:
+        logger.error("Ошибка уведомления о покупке: %s", e)
 
 
 async def cmd_add_blogger(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
