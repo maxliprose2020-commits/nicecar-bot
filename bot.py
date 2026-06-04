@@ -46,7 +46,7 @@ MANAGER_STATS_FILE = "manager_stats.json"
 MANAGER_CARDS_FILE = "manager_cards.json"
 COSTS_FILE = "costs.json"
 MAX_GENERATIONS = 3
-COST_PER_GENERATION = 0.042  # USD, gpt-image-1 1024x1024 standard
+COST_PER_GENERATION = 0.042  # USD, gpt-image-1 1024x1024 medium quality
 
 STARS_PACKAGES = [
     {"stars": 75,  "generations": 10, "payload": "buy_10", "label": "10 генераций — 75 ⭐"},
@@ -1012,6 +1012,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 image=photo_io,
                 prompt=prompt,
                 size="1024x1024",
+                quality="medium",
                 n=1,
             )
             image_bytes = add_watermark(io.BytesIO(base64.b64decode(response.data[0].b64_json)))
