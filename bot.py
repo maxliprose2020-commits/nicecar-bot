@@ -3,7 +3,7 @@ import io
 import base64
 import json
 import logging
-from datetime import date
+from datetime import date, datetime
 from urllib.parse import quote
 from PIL import Image, ImageDraw, ImageFont
 
@@ -45,6 +45,7 @@ USERS_FILE = "users.json"
 REFERRALS_FILE = "referrals.json"
 PURCHASES_FILE = "purchases.json"
 BLOGGERS_FILE = "bloggers.json"
+CARDS_FILE = "user_cards.json"
 MAX_GENERATIONS = 3
 
 STARS_PACKAGES = [
@@ -429,6 +430,7 @@ def register_user(user_id: int, user) -> bool:
         "name": user.full_name,
         "username": user.username or "",
         "joined": str(date.today()),
+        "joined_time": datetime.now().strftime("%H:%M, %d.%m.%Y"),
     }
     _save(USERS_FILE, users)
     init_user_counter(user_id)
@@ -440,6 +442,60 @@ def get_user_name(user_id: int) -> str:
     name = u.get("name", str(user_id))
     username = u.get("username", "")
     return f"{name} @{username}" if username else name
+
+def build_card_text(user_id: int) -> str:
+    users = _load(USERS_FILE)
+    u = users.get(str(user_id), {})
+    username = u.get("username", "")
+    name = u.get("name", str(user_id))
+    joined_time = u.get("joined_time", "—")
+    id_line = f"@{username}" if username else f"ID: {user_id}"
+
+    counters = _load(COUNTERS_FILE)
+    c = counters.get(str(user_id), {})
+    gen_count = c.get("total_ever", 0)
+
+    refs = _load(REFERRALS_FILE)
+    shared_icon = "✅" if any(str(user_id) == k and refs[k].get("invited") for k in refs) else "❌"
+
+    purchases = _load(PURCHASES_FILE)
+    user_purchases = [p for v in purchases.values() for p in v if p.get("user_id") == user_id]
+    if user_purchases:
+        last = user_purchases[-1]
+        stars_line = f"✅ {last['stars']} Stars ({last['generations']} генераций)"
+    else:
+        stars_line = "❌"
+
+    return (
+        f"👤 Новый пользователь — Найскар Центр\n\n"
+        f"🆔 {id_line}\n"
+        f"📱 ID: {user_id}\n"
+        f"⏰ {joined_time}\n\n"
+        f"🎨 Генераций сделал: {gen_count}\n"
+        f"🔗 Поделился с другом: {shared_icon}\n"
+        f"⭐ Купил Stars: {stars_line}"
+    )
+
+async def send_user_card(bot, user_id: int) -> None:
+    try:
+        text = build_card_text(user_id)
+        msg = await bot.send_message(chat_id=OWNER_CHAT_ID, text=text)
+        cards = _load(CARDS_FILE)
+        cards[str(user_id)] = msg.message_id
+        _save(CARDS_FILE, cards)
+    except Exception as e:
+        logger.error("Ошибка отправки карточки: %s", e)
+
+async def update_user_card(bot, user_id: int) -> None:
+    cards = _load(CARDS_FILE)
+    msg_id = cards.get(str(user_id))
+    if not msg_id:
+        return
+    try:
+        text = build_card_text(user_id)
+        await bot.edit_message_text(chat_id=OWNER_CHAT_ID, message_id=msg_id, text=text)
+    except Exception as e:
+        logger.error("Ошибка обновления карточки: %s", e)
 
 def count_users() -> tuple:
     users = _load(USERS_FILE)
@@ -696,6 +752,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             try:
                 referrer_id = int(arg[4:])
                 process_referral(user_id, referrer_id)
+                await update_user_card(context.bot, referrer_id)
                 gen_info = get_generation_info(user_id)
                 await update.message.reply_text(
                     f"🎁 Ты пришёл по реферальной ссылке — тебе начислено "
@@ -709,12 +766,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     if is_new:
 
-        await notify_owner(
-            context,
-            f"👤 Новый пользователь запустил бота:\n"
-            f"{user_link(user)}\n"
-            f"ID: {user_id}"
-        )
+        await send_user_card(context.bot, user_id)
 
     await update.message.reply_text(
         "👋 Привет! За пару кликов покажу как будет выглядеть твоя машина "
@@ -916,27 +968,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             use_generation(user_id)
         blogger_track_generation(user_id)
         info_after = get_generation_info(user_id)
-
-        await notify_owner(
-            context,
-            f"🎨 Новая генерация!\n\n"
-            f"👤 {user_link(query.from_user)}\n"
-            f"ID: {user_id}\n\n"
-            f"🎨 Кузов: {BODY_OPTIONS[sel['body']]} {FINISH_OPTIONS[sel['finish']]}\n"
-            f"💿 Диски: {WHEELS_OPTIONS[sel['wheels']]} {WHEELS_SIZE_OPTIONS[sel['wheels_size']]}\n"
-            f"🪟 Тонировка задних: {TINT_OPTIONS[sel['tint']]}\n"
-            f"🔵 Лобовое: {WINDSHIELD_OPTIONS[sel['windshield']]}\n"
-            f"🌊 Боковые: {SIDEGLASS_OPTIONS[sel['sideglass']]}\n"
-            f"💡 Оптика: {OPTICS_OPTIONS[sel['optics']]}\n"
-            f"⚫ Антихром: {ANTICHROME_OPTIONS[sel['antichrome']]}\n"
-            f"🪞 Зеркала: {MIRRORS_OPTIONS[sel['mirrors']]}\n"
-            f"🚪 Ручки: {HANDLES_OPTIONS[sel['handles']]}\n"
-            f"🖤 Крыша: {ROOF_OPTIONS[sel['roof']]}\n"
-            f"🏎 Обвес: {BODYKIT_OPTIONS[sel['bodykit']]}\n"
-            f"✨ Декор: {DECOR_OPTIONS[sel['decor']]}\n"
-            f"📷 Ракурс: {ANGLE_OPTIONS[sel['angle']]}\n"
-            f"🏙 Фон: {BACKGROUND_OPTIONS[sel['background']]}"
-        )
+        await update_user_card(context.bot, user_id)
 
         caption = (
             "✨ Визуализация готова!\n\n"
@@ -980,15 +1012,11 @@ async def handle_successful_payment(update: Update, context: ContextTypes.DEFAUL
     add_bonus(user_id, pkg["generations"])
     record_purchase(user_id, pkg["stars"], pkg["generations"])
     blogger_track_purchase(user_id)
+    await update_user_card(context.bot, user_id)
     info = get_generation_info(user_id)
     await update.message.reply_text(
         f"✅ Оплата прошла! Начислено {pkg['generations']} генераций.\n"
         f"Всего доступно: {info['total_left']} генераций."
-    )
-    await notify_owner(
-        context,
-        f"⭐ Покупка!\n{user_link(update.effective_user)}\n"
-        f"ID: {user_id}\n{pkg['stars']} Stars → {pkg['generations']} генераций"
     )
 
 
