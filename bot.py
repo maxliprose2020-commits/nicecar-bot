@@ -46,7 +46,7 @@ MANAGER_STATS_FILE = "manager_stats.json"
 MANAGER_CARDS_FILE = "manager_cards.json"
 COSTS_FILE = "costs.json"
 MAX_GENERATIONS = 3
-COST_PER_GENERATION = 0.018  # USD, dall-e-2 1024x1024
+COST_PER_GENERATION = 0.011  # USD, gpt-image-1 1024x1024 low quality
 
 STARS_PACKAGES = [
     {"stars": 75,  "generations": 10, "payload": "buy_10", "label": "10 генераций — 75 ⭐"},
@@ -1006,22 +1006,14 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         try:
             photo_file = await context.bot.get_file(state["photo_id"])
             photo_data = await photo_file.download_as_bytearray()
-            # dall-e-2 требует PNG RGBA 1024x1024
-            orig = Image.open(io.BytesIO(bytes(photo_data))).convert("RGBA")
-            side = min(orig.size)
-            left = (orig.width - side) // 2
-            top = (orig.height - side) // 2
-            orig = orig.crop((left, top, left + side, top + side)).resize((1024, 1024), Image.LANCZOS)
-            png_io = io.BytesIO()
-            orig.save(png_io, format="PNG")
-            png_io.seek(0)
-            png_io.name = "car.png"
+            photo_io = io.BytesIO(bytes(photo_data))
+            photo_io.name = "car.jpg"
             response = openai_client.images.edit(
-                model="dall-e-2",
-                image=png_io,
+                model="gpt-image-1",
+                image=photo_io,
                 prompt=prompt,
                 size="1024x1024",
-                response_format="b64_json",
+                quality="low",
                 n=1,
             )
             image_bytes = add_watermark(io.BytesIO(base64.b64decode(response.data[0].b64_json)))
