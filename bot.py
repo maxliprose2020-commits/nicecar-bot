@@ -44,6 +44,7 @@ COUNTERS_FILE = "counters.json"
 USERS_FILE = "users.json"
 REFERRALS_FILE = "referrals.json"
 PURCHASES_FILE = "purchases.json"
+BLOGGERS_FILE = "bloggers.json"
 MAX_GENERATIONS = 3
 
 STARS_PACKAGES = [
@@ -552,6 +553,34 @@ def get_purchase_stats() -> tuple:
     return total_p, total_s
 
 
+# ── Блогеры ──────────────────────────────────────────────────────────────────
+
+def blogger_track_click(name: str, user_id: int) -> None:
+    data = _load(BLOGGERS_FILE)
+    if name not in data:
+        return
+    key = str(user_id)
+    if key not in data[name]["clicks"]:
+        data[name]["clicks"].append(key)
+    _save(BLOGGERS_FILE, data)
+
+def blogger_track_generation(user_id: int) -> None:
+    data = _load(BLOGGERS_FILE)
+    key = str(user_id)
+    for name, info in data.items():
+        if key in info.get("clicks", []) and key not in info.get("generated", []):
+            info.setdefault("generated", []).append(key)
+    _save(BLOGGERS_FILE, data)
+
+def blogger_track_purchase(user_id: int) -> None:
+    data = _load(BLOGGERS_FILE)
+    key = str(user_id)
+    for name, info in data.items():
+        if key in info.get("clicks", []) and key not in info.get("purchased", []):
+            info.setdefault("purchased", []).append(key)
+    _save(BLOGGERS_FILE, data)
+
+
 # ── Клавиатуры ────────────────────────────────────────────────────────────────
 
 def main_menu(selections: dict) -> InlineKeyboardMarkup:
@@ -661,21 +690,24 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "selections": DEFAULT_SELECTIONS.copy(),
     }
 
+    if context.args:
+        arg = context.args[0]
+        if arg.startswith("ref_") and is_new:
+            try:
+                referrer_id = int(arg[4:])
+                process_referral(user_id, referrer_id)
+                gen_info = get_generation_info(user_id)
+                await update.message.reply_text(
+                    f"🎁 Ты пришёл по реферальной ссылке — тебе начислено "
+                    f"+{gen_info['bonus']} бонусных генераций!"
+                )
+            except ValueError:
+                pass
+        elif arg.startswith("blogger_"):
+            blogger_name = arg[8:]
+            blogger_track_click(blogger_name, user_id)
+
     if is_new:
-        # Обработка реферала
-        if context.args:
-            arg = context.args[0]
-            if arg.startswith("ref_"):
-                try:
-                    referrer_id = int(arg[4:])
-                    process_referral(user_id, referrer_id)
-                    gen_info = get_generation_info(user_id)
-                    await update.message.reply_text(
-                        f"🎁 Ты пришёл по реферальной ссылке — тебе начислено "
-                        f"+{gen_info['bonus']} бонусных генераций!"
-                    )
-                except ValueError:
-                    pass
 
         await notify_owner(
             context,
@@ -882,6 +914,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
         if not is_manager:
             use_generation(user_id)
+        blogger_track_generation(user_id)
         info_after = get_generation_info(user_id)
 
         await notify_owner(
@@ -946,6 +979,7 @@ async def handle_successful_payment(update: Update, context: ContextTypes.DEFAUL
         return
     add_bonus(user_id, pkg["generations"])
     record_purchase(user_id, pkg["stars"], pkg["generations"])
+    blogger_track_purchase(user_id)
     info = get_generation_info(user_id)
     await update.message.reply_text(
         f"✅ Оплата прошла! Начислено {pkg['generations']} генераций.\n"
@@ -956,6 +990,41 @@ async def handle_successful_payment(update: Update, context: ContextTypes.DEFAUL
         f"⭐ Покупка!\n{user_link(update.effective_user)}\n"
         f"ID: {user_id}\n{pkg['stars']} Stars → {pkg['generations']} генераций"
     )
+
+
+async def cmd_add_blogger(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.effective_user.id != ADMIN_ID:
+        return
+    if not context.args:
+        await update.message.reply_text("Использование: /add_blogger [имя]\nПример: /add_blogger ivan")
+        return
+    name = context.args[0].lower()
+    data = _load(BLOGGERS_FILE)
+    if name in data:
+        await update.message.reply_text(f"Блогер '{name}' уже существует.")
+        return
+    data[name] = {"created": str(date.today()), "clicks": [], "generated": [], "purchased": []}
+    _save(BLOGGERS_FILE, data)
+    link = f"https://t.me/{BOT_USERNAME}?start=blogger_{name}"
+    await update.message.reply_text(f"✅ Ссылка для {name}:\n{link}")
+
+
+async def cmd_blogger_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.effective_user.id != ADMIN_ID:
+        return
+    data = _load(BLOGGERS_FILE)
+    if not data:
+        await update.message.reply_text("Блогеров пока нет. Добавь через /add_blogger [имя]")
+        return
+    lines = ["📊 Статистика по блогерам\n"]
+    for name, info in data.items():
+        lines.append(
+            f"👤 {name}\n"
+            f"  Переходов: {len(info.get('clicks', []))}\n"
+            f"  Генерировали: {len(info.get('generated', []))}\n"
+            f"  Купили Stars: {len(info.get('purchased', []))}\n"
+        )
+    await update.message.reply_text("\n".join(lines))
 
 
 async def cmd_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1011,6 +1080,8 @@ def main() -> None:
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("referral", cmd_referral))
     app.add_handler(CommandHandler("stats", cmd_stats))
+    app.add_handler(CommandHandler("add_blogger", cmd_add_blogger))
+    app.add_handler(CommandHandler("blogger_stats", cmd_blogger_stats))
     app.add_handler(CommandHandler("broadcast", cmd_broadcast))
     app.add_handler(CommandHandler("cancel", cmd_cancel))
     app.add_handler(CommandHandler("chatid", cmd_chatid))
