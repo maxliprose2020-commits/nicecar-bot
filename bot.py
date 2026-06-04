@@ -42,7 +42,11 @@ REFERRALS_FILE = "referrals.json"
 PURCHASES_FILE = "purchases.json"
 BLOGGERS_FILE = "bloggers.json"
 CARDS_FILE = "user_cards.json"
+MANAGER_STATS_FILE = "manager_stats.json"
+MANAGER_CARDS_FILE = "manager_cards.json"
+COSTS_FILE = "costs.json"
 MAX_GENERATIONS = 3
+COST_PER_GENERATION = 0.042  # USD, gpt-image-1 1024x1024 standard
 
 STARS_PACKAGES = [
     {"stars": 75,  "generations": 10, "payload": "buy_10", "label": "10 генераций — 75 ⭐"},
@@ -462,12 +466,14 @@ def build_card_text(user_id: int) -> str:
     else:
         stars_line = "❌"
 
+    user_cost = gen_count * COST_PER_GENERATION
     return (
         f"👤 Новый пользователь — Найскар Центр\n\n"
         f"🆔 {id_line}\n"
         f"📱 ID: {user_id}\n"
         f"⏰ {joined_time}\n\n"
         f"🎨 Генераций сделал: {gen_count}\n"
+        f"💸 Расходы на AI: ${user_cost:.3f}\n"
         f"🔗 Поделился с другом: {shared_icon}\n"
         f"⭐ Купил Stars: {stars_line}"
     )
@@ -603,6 +609,69 @@ def get_purchase_stats() -> tuple:
     total_p = sum(len(v) for v in purchases.values())
     total_s = sum(p["stars"] for v in purchases.values() for p in v)
     return total_p, total_s
+
+
+# ── Карточки менеджеров ───────────────────────────────────────────────────────
+
+def track_manager_generation(user_id: int) -> None:
+    data = _load(MANAGER_STATS_FILE)
+    key = str(user_id)
+    if key not in data:
+        data[key] = {"count": 0}
+    data[key]["count"] += 1
+    _save(MANAGER_STATS_FILE, data)
+
+def build_manager_card_text(user_id: int) -> str:
+    users = _load(USERS_FILE)
+    u = users.get(str(user_id), {})
+    username = u.get("username", "")
+    name = u.get("name", str(user_id))
+    id_line = f"@{username}" if username else f"ID: {user_id}"
+    data = _load(MANAGER_STATS_FILE)
+    count = data.get(str(user_id), {}).get("count", 0)
+    cost = count * COST_PER_GENERATION
+    return (
+        f"👨‍💼 Менеджер — Найскар Центр\n\n"
+        f"🆔 {id_line}\n"
+        f"📱 ID: {user_id}\n\n"
+        f"🎨 Генераций сделал: {count}\n"
+        f"💸 Расходы на AI: ${cost:.3f}"
+    )
+
+async def send_manager_card(bot, user_id: int) -> None:
+    try:
+        text = build_manager_card_text(user_id)
+        msg = await bot.send_message(chat_id=OWNER_CHAT_ID, text=text)
+        cards = _load(MANAGER_CARDS_FILE)
+        cards[str(user_id)] = msg.message_id
+        _save(MANAGER_CARDS_FILE, cards)
+    except Exception as e:
+        logger.error("Ошибка отправки карточки менеджера: %s", e)
+
+async def update_manager_card(bot, user_id: int) -> None:
+    cards = _load(MANAGER_CARDS_FILE)
+    msg_id = cards.get(str(user_id))
+    if not msg_id:
+        await send_manager_card(bot, user_id)
+        return
+    try:
+        text = build_manager_card_text(user_id)
+        await bot.edit_message_text(chat_id=OWNER_CHAT_ID, message_id=msg_id, text=text)
+    except Exception as e:
+        logger.error("Ошибка обновления карточки менеджера: %s", e)
+
+
+# ── Расходы на OpenAI ─────────────────────────────────────────────────────────
+
+def add_generation_cost() -> None:
+    data = _load(COSTS_FILE)
+    data["total_usd"] = round(data.get("total_usd", 0.0) + COST_PER_GENERATION, 4)
+    data["total_generations"] = data.get("total_generations", 0) + 1
+    _save(COSTS_FILE, data)
+
+def get_cost_stats() -> tuple:
+    data = _load(COSTS_FILE)
+    return data.get("total_generations", 0), data.get("total_usd", 0.0)
 
 
 # ── Блогеры ──────────────────────────────────────────────────────────────────
@@ -784,6 +853,7 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     total_users, new_today = count_users()
     total_gen, today_gen, exhausted, top = get_stats_counters()
     total_purchases, total_stars = get_purchase_stats()
+    cost_gen, cost_usd = get_cost_stats()
 
     top_lines = []
     for uid, count in top:
@@ -798,6 +868,7 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"🎨 Всего генераций: {total_gen}\n"
         f"🚫 Исчерпали лимит: {exhausted}\n\n"
         f"⭐ Покупок Stars: {total_purchases} (итого {total_stars} Stars)\n\n"
+        f"💸 Расходы OpenAI: {cost_gen} генераций = ${cost_usd:.2f}\n\n"
         f"🏆 Топ-5 активных:\n{top_text}"
     )
 
@@ -954,9 +1025,13 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
         if not is_manager:
             use_generation(user_id)
+            await update_user_card(context.bot, user_id)
+        else:
+            track_manager_generation(user_id)
+            await update_manager_card(context.bot, user_id)
         blogger_track_generation(user_id)
+        add_generation_cost()
         info_after = get_generation_info(user_id)
-        await update_user_card(context.bot, user_id)
 
         caption = (
             "✨ Визуализация готова!\n\n"
