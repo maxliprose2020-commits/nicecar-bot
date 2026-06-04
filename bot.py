@@ -149,8 +149,30 @@ HANDLES_OPTIONS = {
 }
 
 ROOF_OPTIONS = {
-    "original":    "Оригинал",
-    "gloss_black": "Чёрная крыша (эффект панорамы)",
+    "original":          "Оригинал",
+    "roof_only":         "Чёрная крыша (без стоек)",
+    "roof_with_pillars": "Чёрная крыша + стойки",
+    "maybach":           "Майбах стиль (верх до ручек)",
+}
+
+MAYBACH_COLOR_OPTIONS = {
+    "black_gloss": "Чёрный глянец",
+    "black_matte": "Чёрный матт",
+    "black_satin": "Чёрный сатин",
+    "white_gloss": "Белый глянец",
+    "dark_blue":   "Тёмно-синий",
+    "burgundy":    "Бордовый",
+    "silver":      "Серебристый",
+}
+
+MAYBACH_COLOR_EN = {
+    "black_gloss": "gloss black",
+    "black_matte": "matte black",
+    "black_satin": "satin black",
+    "white_gloss": "gloss white",
+    "dark_blue":   "dark navy blue",
+    "burgundy":    "deep burgundy",
+    "silver":      "silver",
 }
 
 DECOR_OPTIONS = {
@@ -282,8 +304,10 @@ HANDLES_EN = {
 }
 
 ROOF_EN = {
-    "original":    "",
-    "gloss_black": "roof wrapped in gloss black vinyl giving a panoramic sunroof appearance",
+    "original":          "",
+    "roof_only":         "roof panel only wrapped in gloss black vinyl, keep all A/B/C pillars in original color",
+    "roof_with_pillars": "roof panel and all window pillars (A/B/C pillars) wrapped in gloss black vinyl",
+    "maybach":           "Maybach-style two-tone: entire upper body from roofline down to the door handle line (roof, pillars, upper door panels) wrapped in gloss black vinyl, lower body keeps original color — clean horizontal split at door handle level",
 }
 
 BODYKIT_EN = {
@@ -332,14 +356,15 @@ DEFAULT_SELECTIONS = {
     "antichrome":   "none",
     "mirrors":      "original",
     "handles":      "original",
-    "roof":         "original",
+    "roof":          "original",
+    "maybach_color": "black_gloss",
     "bodykit":      "none",
     "decor":        "none",
     "angle":        "original",
     "background":   "night_city",
 }
 
-# user_id → {"photo_id": str | None, "selections": dict}
+# user_id → {"photo_id": str | None, "selections": dict, "custom_design": str, "awaiting_custom_design": bool}
 user_states: dict[int, dict] = {}
 admin_state: dict[int, str] = {}
 
@@ -719,10 +744,12 @@ def main_menu(selections: dict) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(f"🪞 Зеркала: {MIRRORS_OPTIONS[selections['mirrors']]}", callback_data="cat_mirrors")],
         [InlineKeyboardButton(f"🚪 Ручки дверей: {HANDLES_OPTIONS[selections['handles']]}", callback_data="cat_handles")],
         [InlineKeyboardButton(f"🖤 Крыша: {ROOF_OPTIONS[selections['roof']]}", callback_data="cat_roof")],
+        *([[InlineKeyboardButton(f"🎨 Цвет верха Майбах: {MAYBACH_COLOR_OPTIONS[selections['maybach_color']]}", callback_data="cat_maybach_color")]] if selections.get("roof") == "maybach" else []),
         [InlineKeyboardButton(f"🏎 Обвес: {BODYKIT_OPTIONS[selections['bodykit']]}", callback_data="cat_bodykit")],
         [InlineKeyboardButton(f"✨ Декор: {DECOR_OPTIONS[selections['decor']]}", callback_data="cat_decor")],
         [InlineKeyboardButton(f"📷 Ракурс: {ANGLE_OPTIONS[selections['angle']]}", callback_data="cat_angle")],
         [InlineKeyboardButton(f"🏙 Фон: {BACKGROUND_OPTIONS[selections['background']]}", callback_data="cat_background")],
+        [InlineKeyboardButton("✏️ Индивидуальный дизайн: " + ("🎲 сюрприз" if selections.get("custom_design") == "__surprise__" else "✅ задан" if selections.get("custom_design") else "не задан"), callback_data="cat_custom_design")],
         [InlineKeyboardButton("🎨 Сгенерировать визуализацию", callback_data="generate")],
     ])
 
@@ -764,24 +791,48 @@ def build_prompt(selections: dict) -> str:
     antichrome = ANTICHROME_EN[selections["antichrome"]]
     mirrors = MIRRORS_EN[selections["mirrors"]]
     handles = HANDLES_EN[selections["handles"]]
-    roof = ROOF_EN[selections["roof"]]
+    if selections["roof"] == "maybach":
+        mb_color = MAYBACH_COLOR_EN[selections.get("maybach_color", "black_gloss")]
+        roof = (
+            f"Maybach-style two-tone: entire upper body from roofline down to the door handle line "
+            f"(roof, pillars, upper door panels) wrapped in {mb_color} vinyl, "
+            f"lower body keeps original color — clean horizontal split at door handle level"
+        )
+    else:
+        roof = ROOF_EN[selections["roof"]]
     decor = DECOR_EN[selections["decor"]]
     background = BACKGROUND_EN[selections["background"]]
     optics = OPTICS_EN[selections["optics"]]
     bodykit = BODYKIT_EN[selections["bodykit"]]
+    custom = selections.get("custom_design", "").strip()
     extras = [x for x in [optics, antichrome, mirrors, handles, roof, bodykit, decor] if x]
-    extras_text = (", " + ", ".join(extras)) if extras else ""
+    if custom == "__surprise__":
+        extras.append(
+            "add unique creative individual design elements of your own choosing — "
+            "something unexpected and original that makes this car truly one-of-a-kind, "
+            "different from any previous generation"
+        )
+    elif custom:
+        extras.append(f"custom individual design elements: {custom}")
+    extras_line = f"(6) Additional details: {', '.join(extras)}. " if extras else ""
     angle = ANGLE_EN[selections["angle"]]
     return (
-        f"Professional automotive photo retouching. "
-        f"Take this exact car and apply the following modifications: {body}, wheels changed to {wheels}, "
-        f"{tint}, {windshield}, {sideglass}{extras_text}. "
-        f"Place the car in {background}, camera angle: {angle}. "
-        f"CRITICAL REQUIREMENTS: "
-        f"Keep the exact same car make, model, body shape, proportions, and all exterior details. "
-        f"Hyper-realistic photography, no cartoon or illustration style. "
-        f"Shot with a professional camera, sharp focus, physically accurate materials and reflections. "
-        f"The result must look like a real photograph of a real car, indistinguishable from a studio automotive photo. "
+        f"Professional automotive visualization. "
+        f"Render this exact car with the following MANDATORY final specifications — every parameter must appear exactly as stated: "
+        f"(1) Body finish: {body}. "
+        f"(2) Wheels: {wheels}. "
+        f"(3) Rear windows: {tint}. "
+        f"(4) Windshield: {windshield}. "
+        f"(5) Front side windows: {sideglass}. "
+        f"{extras_line}"
+        f"Camera angle: {angle}. Background: {background}. "
+        f"STRICT RULES — NO EXCEPTIONS: "
+        f"Do NOT change any specification not listed above. "
+        f"Body color and finish MUST be exactly: {body}. "
+        f"Wheel style MUST be exactly: {wheels}. "
+        f"Keep the exact same car make, model, body shape and proportions as in the original photo. "
+        f"Hyper-realistic photography, not illustration or 3D render. "
+        f"Professional camera, sharp focus, physically accurate materials and reflections. "
         f"8K resolution, cinematic lighting, ray-traced reflections."
     )
 
@@ -802,6 +853,8 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_states[user_id] = {
         "photo_id": None,
         "selections": DEFAULT_SELECTIONS.copy(),
+        "custom_design": "",
+        "awaiting_custom_design": False,
     }
 
     if context.args:
@@ -927,6 +980,51 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await query.edit_message_text("🚪 Ручки дверей — цвет покрытия:", reply_markup=options_keyboard("handles", HANDLES_OPTIONS, sel["handles"]))
     elif data == "cat_roof":
         await query.edit_message_text("🖤 Крыша — цвет покрытия:", reply_markup=options_keyboard("roof", ROOF_OPTIONS, sel["roof"]))
+    elif data == "cat_custom_design":
+        user_states[user_id]["awaiting_custom_design"] = True
+        current = user_states[user_id].get("custom_design", "")
+        current_text = f"\n\nТекущее: «{current}»" if current and current != "__surprise__" else ""
+        await query.edit_message_text(
+            f"✏️ Индивидуальный дизайн{current_text}\n\n"
+            f"Выбери вариант:",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🎲 Удиви меня — AI придумает сам", callback_data="custom_surprise")],
+                [InlineKeyboardButton("✍️ Написать своё описание", callback_data="custom_type")],
+                [InlineKeyboardButton("🗑 Сбросить", callback_data="clear_custom_design")],
+                [InlineKeyboardButton("❌ Отмена", callback_data="cancel_custom_design")],
+            ]),
+        )
+    elif data == "custom_surprise":
+        user_states[user_id]["awaiting_custom_design"] = False
+        user_states[user_id]["custom_design"] = "__surprise__"
+        sel["custom_design"] = "__surprise__"
+        await query.edit_message_text(
+            "🎲 Режим «Удиви меня» включён — AI каждый раз придумает уникальный дизайн!\n\n"
+            "Выбери услуги и нажми 🎨 Сгенерировать визуализацию:",
+            reply_markup=main_menu(sel),
+        )
+    elif data == "custom_type":
+        await query.edit_message_text(
+            "✍️ Напиши своё описание дизайна в чат.\n\n"
+            "Например: «золотые акценты на бамперах», «граффити на капоте», «неоновая подсветка днища»",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Отмена", callback_data="cancel_custom_design")]]),
+        )
+    elif data == "cancel_custom_design":
+        user_states[user_id]["awaiting_custom_design"] = False
+        await query.edit_message_text(
+            "Выбери услуги и нажми 🎨 Сгенерировать визуализацию:",
+            reply_markup=main_menu(sel),
+        )
+    elif data == "clear_custom_design":
+        user_states[user_id]["custom_design"] = ""
+        user_states[user_id]["awaiting_custom_design"] = False
+        sel["custom_design"] = ""
+        await query.edit_message_text(
+            "Индивидуальный дизайн сброшен.\nВыбери услуги и нажми 🎨 Сгенерировать визуализацию:",
+            reply_markup=main_menu(sel),
+        )
+    elif data == "cat_maybach_color":
+        await query.edit_message_text("🎨 Выбери цвет верха Майбах:", reply_markup=options_keyboard("maybach_color", MAYBACH_COLOR_OPTIONS, sel["maybach_color"]))
     elif data == "cat_bodykit":
         await query.edit_message_text("🏎 Выбери обвес:", reply_markup=options_keyboard("bodykit", BODYKIT_OPTIONS, sel["bodykit"]))
     elif data == "cat_decor":
@@ -1152,6 +1250,19 @@ async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
+
+    # Ввод индивидуального дизайна
+    if user_states.get(user_id, {}).get("awaiting_custom_design"):
+        text = update.message.text.strip()
+        user_states[user_id]["awaiting_custom_design"] = False
+        user_states[user_id]["custom_design"] = text
+        user_states[user_id]["selections"]["custom_design"] = text
+        await update.message.reply_text(
+            f"✅ Индивидуальный дизайн сохранён:\n«{text}»\n\nТеперь нажми 🎨 Сгенерировать визуализацию.",
+            reply_markup=main_menu(user_states[user_id]["selections"]),
+        )
+        return
+
     if user_id != ADMIN_ID or admin_state.get(ADMIN_ID) != "awaiting_broadcast":
         return
     admin_state.pop(ADMIN_ID, None)
