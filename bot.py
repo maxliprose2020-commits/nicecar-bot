@@ -31,6 +31,9 @@ NOTIFY_TOKEN = os.environ.get("NOTIFY_TOKEN")
 OWNER_CHAT_ID = int(os.environ.get("OWNER_CHAT_ID", "862676483"))
 ADMIN_ID = int(os.environ.get("ADMIN_ID", "862676483"))
 BOT_USERNAME = os.environ.get("BOT_USERNAME", "nicecar_tuning_bot")
+MANAGER_IDS = set(
+    int(x.strip()) for x in os.environ.get("MANAGER_IDS", "").split(",") if x.strip().isdigit()
+)
 
 openai_client = OpenAI(api_key=OPENAI_API_KEY)
 
@@ -44,9 +47,9 @@ PURCHASES_FILE = "purchases.json"
 MAX_GENERATIONS = 5
 
 STARS_PACKAGES = [
-    {"stars": 200, "generations": 5,  "payload": "buy_5",  "label": "5 генераций — 200 ⭐"},
-    {"stars": 350, "generations": 10, "payload": "buy_10", "label": "10 генераций — 350 ⭐"},
-    {"stars": 600, "generations": 20, "payload": "buy_20", "label": "20 генераций — 600 ⭐"},
+    {"stars": 75,  "generations": 10, "payload": "buy_10", "label": "10 генераций — 75 ⭐"},
+    {"stars": 180, "generations": 25, "payload": "buy_25", "label": "25 генераций — 180 ⭐"},
+    {"stars": 360, "generations": 50, "payload": "buy_50", "label": "50 генераций — 360 ⭐"},
 ]
 
 # ── Варианты на русском ────────────────────────────────────────────────────────
@@ -427,6 +430,7 @@ def register_user(user_id: int, user) -> bool:
         "joined": str(date.today()),
     }
     _save(USERS_FILE, users)
+    init_user_counter(user_id)
     return True
 
 def get_user_name(user_id: int) -> str:
@@ -445,31 +449,40 @@ def count_users() -> tuple:
 # ── Счётчики генераций ────────────────────────────────────────────────────────
 
 def _ensure(counters: dict, key: str) -> None:
-    today = str(date.today())
     if key not in counters:
-        counters[key] = {"date": today, "daily_count": 0, "bonus": 0, "total_ever": 0}
-    elif counters[key].get("date") != today:
-        counters[key]["date"] = today
-        counters[key]["daily_count"] = 0
-    for f in ("bonus", "total_ever"):
-        if f not in counters[key]:
-            counters[key][f] = 0
+        counters[key] = {"free": MAX_GENERATIONS, "bonus": 0, "total_ever": 0}
+    else:
+        # Миграция со старой структуры с daily_count
+        if "daily_count" in counters[key] and "free" not in counters[key]:
+            used = counters[key].get("daily_count", 0)
+            counters[key]["free"] = max(0, MAX_GENERATIONS - used)
+            del counters[key]["daily_count"]
+            counters[key].pop("date", None)
+        for f in ("free", "bonus", "total_ever"):
+            if f not in counters[key]:
+                counters[key][f] = 0
+
+def init_user_counter(user_id: int) -> None:
+    counters = _load(COUNTERS_FILE)
+    key = str(user_id)
+    if key not in counters:
+        counters[key] = {"free": MAX_GENERATIONS, "bonus": 0, "total_ever": 0}
+        _save(COUNTERS_FILE, counters)
 
 def get_generation_info(user_id: int) -> dict:
     counters = _load(COUNTERS_FILE)
     key = str(user_id)
     _ensure(counters, key)
-    daily = counters[key]["daily_count"]
+    free = counters[key]["free"]
     bonus = counters[key]["bonus"]
-    free_left = max(0, MAX_GENERATIONS - daily)
-    return {"daily_used": daily, "bonus": bonus, "free_left": free_left, "total_left": free_left + bonus}
+    return {"free": free, "bonus": bonus, "total_left": free + bonus}
 
 def use_generation(user_id: int) -> None:
     counters = _load(COUNTERS_FILE)
     key = str(user_id)
     _ensure(counters, key)
-    if counters[key]["daily_count"] < MAX_GENERATIONS:
-        counters[key]["daily_count"] += 1
+    if counters[key]["free"] > 0:
+        counters[key]["free"] -= 1
     else:
         counters[key]["bonus"] = max(0, counters[key]["bonus"] - 1)
     counters[key]["total_ever"] += 1
@@ -484,12 +497,11 @@ def add_bonus(user_id: int, amount: int) -> None:
 
 def get_stats_counters() -> tuple:
     counters = _load(COUNTERS_FILE)
-    today = str(date.today())
     total_ever = sum(c.get("total_ever", 0) for c in counters.values())
-    today_count = sum(c.get("daily_count", 0) for c in counters.values() if c.get("date") == today)
+    today_count = total_ever  # нет дневного счётчика, используем total
     exhausted = sum(
         1 for c in counters.values()
-        if c.get("date") == today and c.get("daily_count", 0) >= MAX_GENERATIONS and c.get("bonus", 0) == 0
+        if c.get("free", 0) == 0 and c.get("bonus", 0) == 0
     )
     top = sorted(
         [(k, c.get("total_ever", 0)) for k, c in counters.items()],
@@ -712,8 +724,7 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"👥 Всего пользователей: {total_users}\n"
         f"🆕 Новых сегодня: {new_today}\n\n"
         f"🎨 Всего генераций: {total_gen}\n"
-        f"📅 Генераций сегодня: {today_gen}\n"
-        f"🚫 Исчерпали лимит сегодня: {exhausted}\n\n"
+        f"🚫 Исчерпали лимит: {exhausted}\n\n"
         f"⭐ Покупок Stars: {total_purchases} (итого {total_stars} Stars)\n\n"
         f"🏆 Топ-5 активных:\n{top_text}"
     )
@@ -729,9 +740,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     user_states[user_id]["photo_id"] = update.message.photo[-1].file_id
     info = get_generation_info(user_id)
     await update.message.reply_text(
-        f"✅ Фото получено!\n"
-        f"Доступно генераций: {info['total_left']} "
-        f"(бесплатных: {info['free_left']}, бонусных: {info['bonus']})\n\n"
+        f"✅ Фото получено! Доступно генераций: {info['total_left']}\n\n"
         "Выбери услуги и нажми 🎨 Сгенерировать визуализацию:",
         reply_markup=main_menu(user_states[user_id]["selections"]),
     )
@@ -831,15 +840,16 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             return
 
         info = get_generation_info(user_id)
-        if info["total_left"] <= 0:
+        is_manager = user_id in MANAGER_IDS or user_id == ADMIN_ID
+        if info["total_left"] <= 0 and not is_manager:
             ref_link = f"https://t.me/{BOT_USERNAME}?start=ref_{user_id}"
             await query.edit_message_text(
-                f"Ты использовал все {MAX_GENERATIONS} бесплатных генераций на сегодня 🎨\n\n"
+                f"Ты использовал все бесплатные генерации 🎨\n\n"
                 f"Хочешь ещё?\n\n"
-                f"⭐ 5 генераций — 200 Stars\n"
-                f"⭐ 10 генераций — 350 Stars\n"
-                f"⭐ 20 генераций — 600 Stars\n\n"
-                f"Или пригласи друга и получи +3 генерации бесплатно:\n{ref_link}",
+                f"⭐ 10 генераций — 75 Stars (~$1.8)\n"
+                f"⭐ 25 генераций — 180 Stars (~$4.3)\n"
+                f"⭐ 50 генераций — 360 Stars (~$8.6)\n\n"
+                f"Или пригласи друга и получи +3 генерации бесплатно 👇",
                 reply_markup=buy_keyboard(),
             )
             return
@@ -870,7 +880,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             )
             return
 
-        use_generation(user_id)
+        if not is_manager:
+            use_generation(user_id)
         info_after = get_generation_info(user_id)
 
         await notify_owner(
@@ -904,8 +915,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             f"🪞 {MIRRORS_OPTIONS[sel['mirrors']]}  •  🚪 {HANDLES_OPTIONS[sel['handles']]}  •  🖤 {ROOF_OPTIONS[sel['roof']]}\n"
             f"🏎 {BODYKIT_OPTIONS[sel['bodykit']]}\n"
             f"✨ {DECOR_OPTIONS[sel['decor']]}\n\n"
-            f"Осталось генераций: {info_after['total_left']} "
-            f"(бесплатных: {info_after['free_left']}, бонусных: {info_after['bonus']})"
+            f"Осталось генераций: {info_after['total_left']}"
         )
 
         share_text = quote("Смотри как я изменил свою машину! Попробуй сам бесплатно 👇")
