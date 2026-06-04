@@ -27,7 +27,6 @@ logger = logging.getLogger(__name__)
 
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
-NOTIFY_TOKEN = os.environ.get("NOTIFY_TOKEN")
 OWNER_CHAT_ID = int(os.environ.get("OWNER_CHAT_ID", "862676483"))
 ADMIN_ID = int(os.environ.get("ADMIN_ID", "862676483"))
 BOT_USERNAME = os.environ.get("BOT_USERNAME", "nicecar_tuning_bot")
@@ -36,9 +35,6 @@ MANAGER_IDS = set(
 )
 
 openai_client = OpenAI(api_key=OPENAI_API_KEY)
-
-from telegram import Bot as TelegramBot
-_notify_bot = TelegramBot(token=NOTIFY_TOKEN) if NOTIFY_TOKEN else None
 
 COUNTERS_FILE = "counters.json"
 USERS_FILE = "users.json"
@@ -726,14 +722,6 @@ def user_link(user) -> str:
     name = user.full_name or "Без имени"
     username = f" @{user.username}" if user.username else ""
     return f"{name}{username}"
-
-
-async def notify_owner(context, text: str) -> None:
-    try:
-        bot = _notify_bot if _notify_bot else context.bot
-        await bot.send_message(chat_id=OWNER_CHAT_ID, text=text)
-    except Exception as e:
-        logger.error("Ошибка отправки уведомления: %s", e)
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
