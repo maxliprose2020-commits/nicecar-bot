@@ -836,9 +836,11 @@ def build_prompt(selections: dict) -> str:
         f"CRITICAL: The car silhouette, body panels, headlights, grille, and all exterior details "
         f"must remain IDENTICAL to the input photo — only the listed modifications are applied. "
         f"Do NOT reshape, redesign or distort any part of the car. "
+        f"Preserve the original photo's lighting conditions, shadows, and ambient reflections exactly. "
         f"Result must look like the SAME car with a vinyl wrap applied by a professional detailing shop. "
+        f"The wrap material must show realistic reflections consistent with the original photo's environment. "
         f"Photorealistic quality, not illustration or CGI. "
-        f"8K resolution, cinematic lighting, physically accurate material reflections."
+        f"8K resolution, physically accurate material reflections."
     )
 
 
@@ -1109,8 +1111,11 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         try:
             photo_file = await context.bot.get_file(state["photo_id"])
             photo_data = await photo_file.download_as_bytearray()
-            photo_io = io.BytesIO(bytes(photo_data))
-            photo_io.name = "car.jpg"
+            orig_img = Image.open(io.BytesIO(bytes(photo_data))).convert("RGB")
+            photo_io = io.BytesIO()
+            orig_img.save(photo_io, format="PNG")
+            photo_io.seek(0)
+            photo_io.name = "car.png"
             response = openai_client.images.edit(
                 model="gpt-image-1",
                 image=photo_io,
