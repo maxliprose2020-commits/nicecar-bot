@@ -44,7 +44,7 @@ COUNTERS_FILE = "counters.json"
 USERS_FILE = "users.json"
 REFERRALS_FILE = "referrals.json"
 PURCHASES_FILE = "purchases.json"
-MAX_GENERATIONS = 5
+MAX_GENERATIONS = 3
 
 STARS_PACKAGES = [
     {"stars": 75,  "generations": 10, "payload": "buy_10", "label": "10 генераций — 75 ⭐"},
