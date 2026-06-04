@@ -794,9 +794,13 @@ def build_prompt(selections: dict) -> str:
     if selections["roof"] == "maybach":
         mb_color = MAYBACH_COLOR_EN[selections.get("maybach_color", "black_gloss")]
         roof = (
-            f"Maybach-style two-tone: entire upper body from roofline down to the door handle line "
-            f"(roof, pillars, upper door panels) wrapped in {mb_color} vinyl, "
-            f"lower body keeps original color — clean horizontal split at door handle level"
+            f"Maybach-style bicolor two-tone vinyl wrap: "
+            f"roof panel, hood, trunk lid, and all window pillars (A/B/C) wrapped in {mb_color} vinyl. "
+            f"Door panels, fenders, and bumpers remain in the original car color. "
+            f"A thin elegant contrasting pinstripe accent line runs precisely along the entire boundary "
+            f"between the two colors, following the body's character line. "
+            f"The color separation line must be razor-sharp and clean with no blending or gradients. "
+            f"This is exactly the classic Mercedes-Maybach bicolor two-tone finish."
         )
     else:
         roof = ROOF_EN[selections["roof"]]
@@ -817,8 +821,11 @@ def build_prompt(selections: dict) -> str:
     extras_line = f"(6) Additional details: {', '.join(extras)}. " if extras else ""
     angle = ANGLE_EN[selections["angle"]]
     return (
-        f"Professional automotive visualization. "
-        f"Render this exact car with the following MANDATORY final specifications — every parameter must appear exactly as stated: "
+        f"PHOTO RETOUCHING TASK — edit this existing car photo, do NOT generate a new car. "
+        f"Preserve EVERY original detail of this car without exception: "
+        f"exact make, model, body shape, proportions, wheelbase, door count, "
+        f"headlight shape, grille design, bumper contours, all body lines and curves. "
+        f"ONLY apply these specific changes and nothing else: "
         f"(1) Body finish: {body}. "
         f"(2) Wheels: {wheels}. "
         f"(3) Rear windows: {tint}. "
@@ -826,14 +833,12 @@ def build_prompt(selections: dict) -> str:
         f"(5) Front side windows: {sideglass}. "
         f"{extras_line}"
         f"Camera angle: {angle}. Background: {background}. "
-        f"STRICT RULES — NO EXCEPTIONS: "
-        f"Do NOT change any specification not listed above. "
-        f"Body color and finish MUST be exactly: {body}. "
-        f"Wheel style MUST be exactly: {wheels}. "
-        f"Keep the exact same car make, model, body shape and proportions as in the original photo. "
-        f"Hyper-realistic photography, not illustration or 3D render. "
-        f"Professional camera, sharp focus, physically accurate materials and reflections. "
-        f"8K resolution, cinematic lighting, ray-traced reflections."
+        f"CRITICAL: The car silhouette, body panels, headlights, grille, and all exterior details "
+        f"must remain IDENTICAL to the input photo — only the listed modifications are applied. "
+        f"Do NOT reshape, redesign or distort any part of the car. "
+        f"Result must look like the SAME car with a vinyl wrap applied by a professional detailing shop. "
+        f"Photorealistic quality, not illustration or CGI. "
+        f"8K resolution, cinematic lighting, physically accurate material reflections."
     )
 
 
