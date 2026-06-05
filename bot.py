@@ -615,6 +615,14 @@ def process_referral(new_user_id: int, referrer_id: int) -> None:
     _save(REFERRALS_FILE, refs)
     add_bonus(referrer_id, 3)
     add_bonus(new_user_id, 2)
+    # Привязываем студию реферера к новому пользователю
+    studio_name = get_user_studio(referrer_id)
+    if studio_name:
+        set_user_studio(new_user_id, studio_name)
+        studios = _load(STUDIOS_FILE)
+        if studio_name in studios:
+            studios[studio_name]["users_count"] = studios[studio_name].get("users_count", 0) + 1
+            _save(STUDIOS_FILE, studios)
 
 def get_referral_stats(user_id: int) -> dict:
     refs = _load(REFERRALS_FILE)
