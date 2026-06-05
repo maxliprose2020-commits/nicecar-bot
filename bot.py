@@ -742,6 +742,8 @@ async def send_hot_lead(bot, user, service: str) -> None:
     if studio_name and studio_name in studios:
         track_studio_lead_count(studio_name)
         studio = studios[studio_name]
+        used = studio.get("used", 0)
+        limit = studio.get("limit", 150)
         try:
             await bot.send_message(
                 chat_id=studio["telegram_id"],
@@ -751,7 +753,8 @@ async def send_hot_lead(bot, user, service: str) -> None:
                     f"📱 ID: {user.id}\n"
                     f"⏰ {now}\n\n"
                     f"🚗 Интерес: {service}\n"
-                    f"🔗 Написать клиенту: {link}"
+                    f"🔗 Написать клиенту: {link}\n\n"
+                    f"📊 Генераций: {used} из {limit} использовано"
                 ),
             )
         except Exception as e:
@@ -830,6 +833,37 @@ def track_studio_lead_count(studio_name: str) -> None:
     if studio_name in studios:
         studios[studio_name]["leads_count"] = studios[studio_name].get("leads_count", 0) + 1
         _save(STUDIOS_FILE, studios)
+
+def studio_milestone_reached(studio_name: str) -> int:
+    """Возвращает использованное количество если достигли кратного 50, иначе 0."""
+    studios = _load(STUDIOS_FILE)
+    st = studios.get(studio_name, {})
+    used = st.get("used", 0)
+    if used > 0 and used % 50 == 0:
+        return used
+    return 0
+
+def studio_limit_just_reached(studio_name: str) -> bool:
+    studios = _load(STUDIOS_FILE)
+    st = studios.get(studio_name, {})
+    if st.get("limit_notified"):
+        return False
+    if st.get("used", 0) >= st.get("limit", 9999):
+        studios[studio_name]["limit_notified"] = True
+        _save(STUDIOS_FILE, studios)
+        return True
+    return False
+
+async def notify_studio_limit_reached(bot, studio_name: str) -> None:
+    studios = _load(STUDIOS_FILE)
+    st = studios.get(studio_name, {})
+    try:
+        await bot.send_message(
+            chat_id=st["telegram_id"],
+            text="⚠️ Лимит генераций исчерпан.\nДля пополнения напишите: @maxlipai",
+        )
+    except Exception as e:
+        logger.error("Ошибка уведомления о лимите студии: %s", e)
 
 
 # ── Блогеры ──────────────────────────────────────────────────────────────────
@@ -1282,12 +1316,12 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         info = get_generation_info(user_id)
         is_manager = user_id in MANAGER_IDS or user_id == ADMIN_ID
 
-        # Проверка лимита студии
+        # Проверка лимита студии (кроме главного админа)
         studio_name = get_user_studio(user_id)
-        if studio_name and not is_manager:
+        if studio_name and user_id != ADMIN_ID:
             studios = _load(STUDIOS_FILE)
             st = studios.get(studio_name, {})
-            if st.get("status") != "trial" or st.get("used", 0) >= st.get("limit", 0):
+            if st.get("status") == "expired" or st.get("used", 0) >= st.get("limit", 9999):
                 contact = st.get("contact", "")
                 contact_line = f"\n\nСвяжитесь с нами: {contact}" if contact else ""
                 await query.edit_message_text(
@@ -1346,6 +1380,21 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await update_manager_card(context.bot, user_id)
         blogger_track_generation(user_id)
         track_studio_generation(user_id)
+        if studio_name:
+            milestone = studio_milestone_reached(studio_name)
+            if milestone:
+                studios_data = _load(STUDIOS_FILE)
+                st = studios_data.get(studio_name, {})
+                limit = st.get("limit", 150)
+                try:
+                    await context.bot.send_message(
+                        chat_id=st["telegram_id"],
+                        text=f"📊 Генераций использовано: {milestone} из {limit}\nОсталось: {limit - milestone}"
+                    )
+                except Exception as e:
+                    logger.error("Ошибка отправки milestone студии: %s", e)
+            if studio_limit_just_reached(studio_name):
+                await notify_studio_limit_reached(context.bot, studio_name)
         add_generation_cost()
         info_after = get_generation_info(user_id)
 
@@ -1363,7 +1412,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
 
         share_text = quote("Смотри как я изменил свою машину! Попробуй сам бесплатно 👇")
-        ref_url = quote(f"https://t.me/{BOT_USERNAME}?start=ref_{user_id}")
+        if studio_name:
+            ref_url = quote(f"https://t.me/{BOT_USERNAME}?start=studio_{studio_name}")
+        else:
+            ref_url = quote(f"https://t.me/{BOT_USERNAME}?start=ref_{user_id}")
         result_keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("💬 Узнать стоимость тюнинга", url="https://t.me/nicecar_center")],
             [InlineKeyboardButton("🚀 Поделиться с другом (+3 генерации)", url=f"https://t.me/share/url?url={ref_url}&text={share_text}")],
@@ -1614,9 +1666,9 @@ async def daily_studio_job(context) -> None:
                     f"Использовано {used} из {limit} генераций.\n"
                     f"Получено лидов: {leads}\n\n"
                     f"Выберите пакет чтобы продолжить:\n"
-                    f"⭐ Старт — $99/мес (100 клиентов)\n"
-                    f"⭐ Бизнес — $199/мес (250 клиентов)\n"
-                    f"⭐ Про — $399/мес (500 клиентов)\n\n"
+                    f"⭐ Старт — $99/мес (100 клиентов, 600 генераций)\n"
+                    f"⭐ Бизнес — $199/мес (250 клиентов, 1500 генераций)\n"
+                    f"⭐ Про — $399/мес (500 клиентов, 3000 генераций)\n\n"
                     f"Написать менеджеру: @maxlipai"
                 ))
             except Exception as e:
