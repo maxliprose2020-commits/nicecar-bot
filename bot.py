@@ -1036,6 +1036,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                     [InlineKeyboardButton("🧹 Химчистка салона", callback_data="lead|Химчистка салона")],
                     [InlineKeyboardButton("🪟 Тонировка", callback_data="lead|Тонировка")],
                     [InlineKeyboardButton("🚿 Мойка", callback_data="lead|Мойка")],
+                    [InlineKeyboardButton("🔧 Другие услуги", callback_data="lead|Другие услуги")],
                 ]),
             )
         return
