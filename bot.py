@@ -45,6 +45,7 @@ CARDS_FILE = "user_cards.json"
 MANAGER_STATS_FILE = "manager_stats.json"
 MANAGER_CARDS_FILE = "manager_cards.json"
 COSTS_FILE = "costs.json"
+LEADS_FILE = "leads.json"
 MAX_GENERATIONS = 3
 COST_PER_GENERATION = 0.042  # USD, gpt-image-1 1024x1024 medium quality
 
@@ -700,6 +701,46 @@ def get_cost_stats() -> tuple:
     return data.get("total_generations", 0), data.get("total_usd", 0.0)
 
 
+# ── Квалификационные вопросы (лиды) ──────────────────────────────────────────
+
+def should_ask_qualification(user_id: int) -> bool:
+    counters = _load(COUNTERS_FILE)
+    total = counters.get(str(user_id), {}).get("total_ever", 0)
+    leads = _load(LEADS_FILE)
+    already_asked = str(user_id) in leads
+    return total >= MAX_GENERATIONS and not already_asked
+
+def mark_qualification_asked(user_id: int) -> None:
+    leads = _load(LEADS_FILE)
+    leads[str(user_id)] = {"asked": True}
+    _save(LEADS_FILE, leads)
+
+def save_lead(user_id: int, interest: str, service: str = "") -> None:
+    leads = _load(LEADS_FILE)
+    leads[str(user_id)]["interest"] = interest
+    if service:
+        leads[str(user_id)]["service"] = service
+    _save(LEADS_FILE, leads)
+
+async def send_hot_lead(bot, user, service: str) -> None:
+    username = f"@{user.username}" if user.username else user.full_name
+    link = f"t.me/{user.username}" if user.username else f"tg://user?id={user.id}"
+    now = datetime.now().strftime("%H:%M, %d.%m.%Y")
+    try:
+        await bot.send_message(
+            chat_id=OWNER_CHAT_ID,
+            text=(
+                f"🔥 Горячий лид!\n\n"
+                f"👤 {username}\n"
+                f"🚗 Интерес: {service}\n"
+                f"⏰ {now}\n\n"
+                f"{link}"
+            ),
+        )
+    except Exception as e:
+        logger.error("Ошибка отправки лида: %s", e)
+
+
 # ── Блогеры ──────────────────────────────────────────────────────────────────
 
 def blogger_track_click(name: str, user_id: int) -> None:
@@ -1072,6 +1113,39 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 "Выбери услуги и нажми 🎨 Сгенерировать визуализацию:",
                 reply_markup=main_menu(sel),
             )
+    elif data.startswith("qual|"):
+        answer = data[5:]
+        if answer == "no":
+            save_lead(user_id, "no")
+            ref_link = f"https://t.me/{BOT_USERNAME}?start=ref_{user_id}"
+            await query.edit_message_text(
+                "Окей! Если надумаешь — мы здесь 😊\n\n"
+                "Пригласи друга и получи +3 генерации бесплатно 👇",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔗 Пригласить друга", url=f"https://t.me/share/url?url={quote(ref_link)}")],
+                ]),
+            )
+        else:
+            save_lead(user_id, answer)
+            await query.edit_message_text(
+                "Что интересует больше всего?",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🎨 Оклейка плёнкой", callback_data="lead|Оклейка плёнкой")],
+                    [InlineKeyboardButton("✨ Полировка кузова", callback_data="lead|Полировка кузова")],
+                    [InlineKeyboardButton("🛡 Керамика", callback_data="lead|Керамика")],
+                    [InlineKeyboardButton("🧹 Химчистка салона", callback_data="lead|Химчистка салона")],
+                    [InlineKeyboardButton("🪟 Тонировка", callback_data="lead|Тонировка")],
+                    [InlineKeyboardButton("🚿 Мойка", callback_data="lead|Мойка")],
+                ]),
+            )
+    elif data.startswith("lead|"):
+        service = data[5:]
+        save_lead(user_id, "interested", service)
+        await query.edit_message_text(
+            "Отлично! Скоро свяжемся с тобой\n"
+            "и сориентируем по стоимости услуг 😊"
+        )
+        await send_hot_lead(context.bot, query.from_user, service)
     elif data == "show_referral":
         ref_link = f"https://t.me/{BOT_USERNAME}?start=ref_{user_id}"
         stats = get_referral_stats(user_id)
@@ -1183,6 +1257,22 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             caption=caption,
             reply_markup=result_keyboard,
         )
+
+        if not is_manager and should_ask_qualification(user_id):
+            mark_qualification_asked(user_id)
+            await context.bot.send_message(
+                chat_id=query.message.chat_id,
+                text=(
+                    "Кстати, хочу спросить 🙂\n\n"
+                    "Твоя машина сейчас нуждается\n"
+                    "в уходе?"
+                ),
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("✅ Да, давно пора", callback_data="qual|yes")],
+                    [InlineKeyboardButton("🤔 Думаю об этом", callback_data="qual|maybe")],
+                    [InlineKeyboardButton("❌ Пока нет", callback_data="qual|no")],
+                ]),
+            )
 
 
 async def handle_pre_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
