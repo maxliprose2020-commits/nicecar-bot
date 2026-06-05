@@ -1012,6 +1012,44 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     user_id = query.from_user.id
     data = query.data
 
+    # Квалификационные вопросы — не требуют user_states
+    if data.startswith("qual|"):
+        answer = data[5:]
+        if answer == "no":
+            save_lead(user_id, "no")
+            ref_link = f"https://t.me/{BOT_USERNAME}?start=ref_{user_id}"
+            await query.edit_message_text(
+                "Окей! Если надумаешь — мы здесь 😊\n\n"
+                "Пригласи друга и получи +3 генерации бесплатно 👇",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔗 Пригласить друга", url=f"https://t.me/share/url?url={quote(ref_link)}")],
+                ]),
+            )
+        else:
+            save_lead(user_id, answer)
+            await query.edit_message_text(
+                "Что интересует больше всего?",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🎨 Оклейка плёнкой", callback_data="lead|Оклейка плёнкой")],
+                    [InlineKeyboardButton("✨ Полировка кузова", callback_data="lead|Полировка кузова")],
+                    [InlineKeyboardButton("🛡 Керамика", callback_data="lead|Керамика")],
+                    [InlineKeyboardButton("🧹 Химчистка салона", callback_data="lead|Химчистка салона")],
+                    [InlineKeyboardButton("🪟 Тонировка", callback_data="lead|Тонировка")],
+                    [InlineKeyboardButton("🚿 Мойка", callback_data="lead|Мойка")],
+                ]),
+            )
+        return
+
+    if data.startswith("lead|"):
+        service = data[5:]
+        save_lead(user_id, "interested", service)
+        await query.edit_message_text(
+            "Отлично! Скоро свяжемся с тобой\n"
+            "и сориентируем по стоимости услуг 😊"
+        )
+        await send_hot_lead(context.bot, query.from_user, service)
+        return
+
     if user_id not in user_states:
         await query.edit_message_text("Пожалуйста, начни сначала — отправь команду /start")
         return
@@ -1115,39 +1153,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 "Выбери услуги и нажми 🎨 Сгенерировать визуализацию:",
                 reply_markup=main_menu(sel),
             )
-    elif data.startswith("qual|"):
-        answer = data[5:]
-        if answer == "no":
-            save_lead(user_id, "no")
-            ref_link = f"https://t.me/{BOT_USERNAME}?start=ref_{user_id}"
-            await query.edit_message_text(
-                "Окей! Если надумаешь — мы здесь 😊\n\n"
-                "Пригласи друга и получи +3 генерации бесплатно 👇",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🔗 Пригласить друга", url=f"https://t.me/share/url?url={quote(ref_link)}")],
-                ]),
-            )
-        else:
-            save_lead(user_id, answer)
-            await query.edit_message_text(
-                "Что интересует больше всего?",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🎨 Оклейка плёнкой", callback_data="lead|Оклейка плёнкой")],
-                    [InlineKeyboardButton("✨ Полировка кузова", callback_data="lead|Полировка кузова")],
-                    [InlineKeyboardButton("🛡 Керамика", callback_data="lead|Керамика")],
-                    [InlineKeyboardButton("🧹 Химчистка салона", callback_data="lead|Химчистка салона")],
-                    [InlineKeyboardButton("🪟 Тонировка", callback_data="lead|Тонировка")],
-                    [InlineKeyboardButton("🚿 Мойка", callback_data="lead|Мойка")],
-                ]),
-            )
-    elif data.startswith("lead|"):
-        service = data[5:]
-        save_lead(user_id, "interested", service)
-        await query.edit_message_text(
-            "Отлично! Скоро свяжемся с тобой\n"
-            "и сориентируем по стоимости услуг 😊"
-        )
-        await send_hot_lead(context.bot, query.from_user, service)
     elif data == "show_referral":
         ref_link = f"https://t.me/{BOT_USERNAME}?start=ref_{user_id}"
         stats = get_referral_stats(user_id)
