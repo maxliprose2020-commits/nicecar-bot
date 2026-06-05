@@ -1398,6 +1398,21 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     )
 
 
+async def cmd_test_qual(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.effective_user.id != ADMIN_ID:
+        return
+    await update.message.reply_text(
+        "Кстати, хочу спросить 🙂\n\n"
+        "Твоя машина сейчас нуждается\n"
+        "в уходе?",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ Да, давно пора", callback_data="qual|yes")],
+            [InlineKeyboardButton("🤔 Думаю об этом", callback_data="qual|maybe")],
+            [InlineKeyboardButton("❌ Пока нет", callback_data="qual|no")],
+        ]),
+    )
+
+
 async def cmd_chatid(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(f"Chat ID: `{update.effective_chat.id}`", parse_mode="Markdown")
 
@@ -1414,6 +1429,7 @@ def main() -> None:
     app.add_handler(CommandHandler("broadcast", cmd_broadcast))
     app.add_handler(CommandHandler("cancel", cmd_cancel))
     app.add_handler(CommandHandler("chatid", cmd_chatid))
+    app.add_handler(CommandHandler("test_qual", cmd_test_qual))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(PreCheckoutQueryHandler(handle_pre_checkout))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, handle_successful_payment))
