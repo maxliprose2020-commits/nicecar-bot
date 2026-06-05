@@ -776,12 +776,13 @@ async def send_hot_lead(bot, user, service: str) -> None:
 
 from datetime import timedelta
 
-def create_studio(name: str, telegram_id: int) -> dict:
+def create_studio(name: str, telegram_id: int, contact: str = "") -> dict:
     studios = _load(STUDIOS_FILE)
     start = date.today()
     end = start + timedelta(days=5)
     studio = {
         "name": name, "telegram_id": telegram_id,
+        "contact": contact,
         "limit": 150, "used": 0,
         "start_date": str(start), "end_date": str(end),
         "status": "trial", "leads_count": 0, "users_count": 0,
@@ -1280,6 +1281,20 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
         info = get_generation_info(user_id)
         is_manager = user_id in MANAGER_IDS or user_id == ADMIN_ID
+
+        # Проверка лимита студии
+        studio_name = get_user_studio(user_id)
+        if studio_name and not is_manager:
+            studios = _load(STUDIOS_FILE)
+            st = studios.get(studio_name, {})
+            if st.get("status") != "trial" or st.get("used", 0) >= st.get("limit", 0):
+                contact = st.get("contact", "")
+                contact_line = f"\n\nСвяжитесь с нами: {contact}" if contact else ""
+                await query.edit_message_text(
+                    f"К сожалению, демонстрационный лимит исчерпан 😔{contact_line}"
+                )
+                return
+
         if info["total_left"] <= 0 and not is_manager:
             ref_link = f"https://t.me/{BOT_USERNAME}?start=ref_{user_id}"
             await query.edit_message_text(
@@ -1514,11 +1529,12 @@ async def cmd_trial(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     except ValueError:
         await update.message.reply_text("Ошибка: telegram_id должен быть числом")
         return
+    contact = context.args[2] if len(context.args) > 2 else ""
     studios = _load(STUDIOS_FILE)
     if name in studios:
         await update.message.reply_text(f"Студия '{name}' уже существует.")
         return
-    studio = create_studio(name, telegram_id)
+    studio = create_studio(name, telegram_id, contact)
     link = f"https://t.me/{BOT_USERNAME}?start=studio_{name}"
     try:
         await context.bot.send_message(
