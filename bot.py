@@ -46,6 +46,7 @@ MANAGER_STATS_FILE = "manager_stats.json"
 MANAGER_CARDS_FILE = "manager_cards.json"
 COSTS_FILE = "costs.json"
 LEADS_FILE = "leads.json"
+STUDIOS_FILE = "studios.json"
 MAX_GENERATIONS = 3
 COST_PER_GENERATION = 0.042  # USD, gpt-image-1 1024x1024 medium quality
 
@@ -728,19 +729,98 @@ async def send_hot_lead(bot, user, service: str) -> None:
     username = f"@{user.username}" if user.username else user.full_name
     link = f"t.me/{user.username}" if user.username else f"tg://user?id={user.id}"
     now = datetime.now().strftime("%H:%M, %d.%m.%Y")
-    try:
-        await bot.send_message(
-            chat_id=OWNER_CHAT_ID,
-            text=(
-                f"🔥 Горячий лид!\n\n"
-                f"👤 {username}\n"
-                f"🚗 Интерес: {service}\n"
-                f"⏰ {now}\n\n"
-                f"{link}"
-            ),
-        )
-    except Exception as e:
-        logger.error("Ошибка отправки лида: %s", e)
+    studio_name = get_user_studio(user.id)
+    studios = _load(STUDIOS_FILE)
+    if studio_name and studio_name in studios:
+        track_studio_lead_count(studio_name)
+        studio = studios[studio_name]
+        try:
+            await bot.send_message(
+                chat_id=studio["telegram_id"],
+                text=(
+                    f"👤 Новый лид — {studio_name}\n\n"
+                    f"🆔 {username}\n"
+                    f"📱 ID: {user.id}\n"
+                    f"⏰ {now}\n\n"
+                    f"🚗 Интерес: {service}\n"
+                    f"🔗 Написать клиенту: {link}"
+                ),
+            )
+        except Exception as e:
+            logger.error("Ошибка отправки лида студии: %s", e)
+    else:
+        try:
+            await bot.send_message(
+                chat_id=OWNER_CHAT_ID,
+                text=(
+                    f"🔥 Горячий лид!\n\n"
+                    f"👤 {username}\n"
+                    f"🚗 Интерес: {service}\n"
+                    f"⏰ {now}\n\n"
+                    f"{link}"
+                ),
+            )
+        except Exception as e:
+            logger.error("Ошибка отправки лида: %s", e)
+
+
+# ── Студии ───────────────────────────────────────────────────────────────────
+
+from datetime import timedelta
+
+def create_studio(name: str, telegram_id: int) -> dict:
+    studios = _load(STUDIOS_FILE)
+    start = date.today()
+    end = start + timedelta(days=5)
+    studio = {
+        "name": name, "telegram_id": telegram_id,
+        "limit": 150, "used": 0,
+        "start_date": str(start), "end_date": str(end),
+        "status": "trial", "leads_count": 0, "users_count": 0,
+    }
+    studios[name] = studio
+    _save(STUDIOS_FILE, studios)
+    return studio
+
+def get_user_studio(user_id: int) -> str:
+    users = _load(USERS_FILE)
+    return users.get(str(user_id), {}).get("studio", "")
+
+def set_user_studio(user_id: int, studio_name: str) -> None:
+    users = _load(USERS_FILE)
+    if str(user_id) in users:
+        users[str(user_id)]["studio"] = studio_name
+        _save(USERS_FILE, users)
+
+def get_studio_by_owner(telegram_id: int) -> dict | None:
+    studios = _load(STUDIOS_FILE)
+    for s in studios.values():
+        if s.get("telegram_id") == telegram_id:
+            return s
+    return None
+
+def studio_days_elapsed(studio: dict) -> int:
+    start = date.fromisoformat(studio["start_date"])
+    return (date.today() - start).days + 1
+
+def studio_days_left(studio: dict) -> int:
+    end = date.fromisoformat(studio["end_date"])
+    return (end - date.today()).days
+
+def track_studio_generation(user_id: int) -> None:
+    name = get_user_studio(user_id)
+    if not name:
+        return
+    studios = _load(STUDIOS_FILE)
+    if name in studios:
+        studios[name]["used"] = studios[name].get("used", 0) + 1
+        _save(STUDIOS_FILE, studios)
+
+def track_studio_lead_count(studio_name: str) -> None:
+    studios = _load(STUDIOS_FILE)
+    if studio_name in studios:
+        studios[studio_name]["leads_count"] = studios[studio_name].get("leads_count", 0) + 1
+        _save(STUDIOS_FILE, studios)
 
 
 # ── Блогеры ──────────────────────────────────────────────────────────────────
@@ -937,6 +1017,13 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         elif arg.startswith("blogger_"):
             blogger_name = arg[8:]
             blogger_track_click(blogger_name, user_id)
+        elif arg.startswith("studio_") and is_new:
+            studio_name = arg[7:]
+            studios = _load(STUDIOS_FILE)
+            if studio_name in studios and studios[studio_name]["status"] == "trial":
+                set_user_studio(user_id, studio_name)
+                studios[studio_name]["users_count"] = studios[studio_name].get("users_count", 0) + 1
+                _save(STUDIOS_FILE, studios)
 
     if is_new:
 
@@ -1235,6 +1322,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             track_manager_generation(user_id)
             await update_manager_card(context.bot, user_id)
         blogger_track_generation(user_id)
+        track_studio_generation(user_id)
         add_generation_cost()
         info_after = get_generation_info(user_id)
 
@@ -1406,6 +1494,130 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     )
 
 
+async def cmd_trial(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.effective_user.id != ADMIN_ID:
+        return
+    if len(context.args) < 2:
+        await update.message.reply_text("Использование: /trial [название] [telegram_id]\nПример: /trial topcar_moscow 123456789")
+        return
+    name = context.args[0].lower()
+    try:
+        telegram_id = int(context.args[1])
+    except ValueError:
+        await update.message.reply_text("Ошибка: telegram_id должен быть числом")
+        return
+    studios = _load(STUDIOS_FILE)
+    if name in studios:
+        await update.message.reply_text(f"Студия '{name}' уже существует.")
+        return
+    studio = create_studio(name, telegram_id)
+    link = f"https://t.me/{BOT_USERNAME}?start=studio_{name}"
+    try:
+        await context.bot.send_message(
+            chat_id=telegram_id,
+            text=(
+                f"🎉 Добро пожаловать в NICECAR Tuning!\n\n"
+                f"Ваш пробный период активирован:\n"
+                f"📅 5 дней\n"
+                f"🎨 150 генераций\n"
+                f"🔗 Ваша ссылка:\n{link}\n\n"
+                f"Лиды будут приходить вам в этот чат автоматически.\n"
+                f"По вопросам — @maxlipai"
+            ),
+        )
+        await context.bot.send_message(
+            chat_id=telegram_id,
+            text="Чтобы получать лиды убедитесь что ваш Telegram ID правильный.\nПроверить свой ID: @userinfobot",
+        )
+    except Exception as e:
+        logger.error("Ошибка отправки студии: %s", e)
+    await update.message.reply_text(
+        f"✅ Студия '{name}' создана!\n"
+        f"Период: {studio['start_date']} — {studio['end_date']}\n"
+        f"Ссылка: {link}"
+    )
+
+
+async def cmd_mystats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+    studio = get_studio_by_owner(user_id)
+    if not studio:
+        return
+    await update.message.reply_text(
+        f"📊 Ваша статистика — {studio['name']}\n\n"
+        f"👥 Пользователей по вашей ссылке: {studio.get('users_count', 0)}\n"
+        f"💡 Лидов получено: {studio.get('leads_count', 0)}\n"
+        f"🎨 Генераций использовано: {studio.get('used', 0)} из {studio['limit']}\n"
+        f"📅 Осталось дней: {max(0, studio_days_left(studio))}"
+    )
+
+
+async def cmd_mylink(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+    studio = get_studio_by_owner(user_id)
+    if not studio:
+        return
+    link = f"https://t.me/{BOT_USERNAME}?start=studio_{studio['name']}"
+    await update.message.reply_text(f"🔗 Ваша ссылка:\n{link}")
+
+
+async def daily_studio_job(context) -> None:
+    import pytz
+    studios = _load(STUDIOS_FILE)
+    active_lines = []
+    for name, studio in list(studios.items()):
+        if studio["status"] != "trial":
+            continue
+        elapsed = studio_days_elapsed(studio)
+        tid = studio["telegram_id"]
+        used = studio.get("used", 0)
+        leads = studio.get("leads_count", 0)
+        limit = studio["limit"]
+        if elapsed == 3:
+            try:
+                await context.bot.send_message(chat_id=tid, text=(
+                    f"⏰ Осталось 2 дня пробного периода.\n"
+                    f"Использовано {used} из {limit} генераций.\n"
+                    f"Получено лидов: {leads}\n\n"
+                    f"Хотите продолжить?\nНапишите нам: @maxlipai"
+                ))
+            except Exception as e:
+                logger.error("Ошибка напоминания студии %s: %s", name, e)
+        elif elapsed == 5:
+            try:
+                await context.bot.send_message(chat_id=tid, text=(
+                    f"⚠️ Пробный период заканчивается завтра!\n"
+                    f"Использовано {used} из {limit} генераций.\n"
+                    f"Получено лидов: {leads}\n\n"
+                    f"Выберите пакет чтобы продолжить:\n"
+                    f"⭐ Старт — $99/мес (100 клиентов)\n"
+                    f"⭐ Бизнес — $199/мес (250 клиентов)\n"
+                    f"⭐ Про — $399/мес (500 клиентов)\n\n"
+                    f"Написать менеджеру: @maxlipai"
+                ))
+            except Exception as e:
+                logger.error("Ошибка напоминания студии %s: %s", name, e)
+        elif elapsed >= 6:
+            studios[name]["status"] = "expired"
+            _save(STUDIOS_FILE, studios)
+            try:
+                await context.bot.send_message(chat_id=tid, text=(
+                    "❌ Пробный период завершён.\nДля продолжения напишите: @maxlipai"
+                ))
+            except Exception as e:
+                logger.error("Ошибка уведомления о конце триала %s: %s", name, e)
+            continue
+        active_lines.append(f"- {name}: день {elapsed}/5, использовано {used} генераций, лидов: {leads}")
+    if active_lines:
+        try:
+            await context.bot.send_message(
+                chat_id=ADMIN_ID,
+                text="📊 Активные триалы:\n" + "\n".join(active_lines),
+            )
+        except Exception as e:
+            logger.error("Ошибка отчёта админу: %s", e)
+
+
 async def cmd_test_qual(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.effective_user.id != ADMIN_ID:
         return
@@ -1438,6 +1650,14 @@ def main() -> None:
     app.add_handler(CommandHandler("cancel", cmd_cancel))
     app.add_handler(CommandHandler("chatid", cmd_chatid))
     app.add_handler(CommandHandler("test_qual", cmd_test_qual))
+    app.add_handler(CommandHandler("trial", cmd_trial))
+    app.add_handler(CommandHandler("mystats", cmd_mystats))
+    app.add_handler(CommandHandler("mylink", cmd_mylink))
+
+    import pytz
+    from datetime import time as dtime
+    tz = pytz.timezone("Europe/Minsk")
+    app.job_queue.run_daily(daily_studio_job, time=dtime(9, 0, tzinfo=tz))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(PreCheckoutQueryHandler(handle_pre_checkout))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, handle_successful_payment))
