@@ -820,28 +820,41 @@ def build_prompt(selections: dict) -> str:
         extras.append(f"custom individual design elements: {custom}")
     extras_line = f"(6) Additional details: {', '.join(extras)}. " if extras else ""
     angle = ANGLE_EN[selections["angle"]]
-    return (
-        f"PHOTO RETOUCHING TASK — edit this existing car photo, do NOT generate a new car. "
-        f"Preserve EVERY original detail of this car without exception: "
-        f"exact make, model, body shape, proportions, wheelbase, door count, "
-        f"headlight shape, grille design, bumper contours, all body lines and curves. "
-        f"ONLY apply these specific changes and nothing else: "
-        f"(1) Body finish: {body}. "
-        f"(2) Wheels: {wheels}. "
-        f"(3) Rear windows: {tint}. "
-        f"(4) Windshield: {windshield}. "
-        f"(5) Front side windows: {sideglass}. "
-        f"{extras_line}"
-        f"Camera angle: {angle}. Background: {background}. "
-        f"CRITICAL — preserve these from the original photo: "
-        f"exact car make, model, headlight shape, grille design, bumper contours, body panel lines, proportions. "
-        f"Do NOT reshape or distort any part of the car body. "
-        f"The camera angle and background MUST change as specified above. "
-        f"Result must look like the SAME car photographed from a different angle with a vinyl wrap "
-        f"applied by a professional detailing shop. "
-        f"Photorealistic quality, not illustration or CGI. "
-        f"8K resolution, physically accurate material reflections."
-    )
+    angle_key = selections["angle"]
+    if angle_key == "original":
+        return (
+            f"PHOTO RETOUCHING TASK — edit this existing car photo, do NOT generate a new car. "
+            f"Preserve EVERY original detail: exact make, model, body shape, proportions, wheelbase, "
+            f"door count, headlight shape, grille design, bumper contours, all body lines. "
+            f"Keep the same camera angle and position as the original photo. "
+            f"ONLY apply these specific changes: "
+            f"(1) Body finish: {body}. "
+            f"(2) Wheels: {wheels}. "
+            f"(3) Rear windows: {tint}. "
+            f"(4) Windshield: {windshield}. "
+            f"(5) Front side windows: {sideglass}. "
+            f"{extras_line}"
+            f"Background: {background}. "
+            f"Result must look like the SAME car with a vinyl wrap applied by a professional detailing shop. "
+            f"Photorealistic quality, not illustration or CGI. 8K resolution."
+        )
+    else:
+        return (
+            f"Create a photorealistic image of the SAME car from this photo, shown from a {angle} view. "
+            f"Identify this car's exact make, model, body shape, headlights, grille and all exterior details "
+            f"from the input photo and reproduce them faithfully from the new angle. "
+            f"Apply these modifications to the car: "
+            f"(1) Body finish: {body}. "
+            f"(2) Wheels: {wheels}. "
+            f"(3) Rear windows: {tint}. "
+            f"(4) Windshield: {windshield}. "
+            f"(5) Front side windows: {sideglass}. "
+            f"{extras_line}"
+            f"Background: {background}. "
+            f"The car must be recognizable as the exact same vehicle — same model, same proportions, "
+            f"same design details, only viewed from a different angle with the listed modifications applied. "
+            f"Photorealistic automotive photography, not illustration or CGI. 8K resolution."
+        )
 
 
 # ── Хэндлеры ──────────────────────────────────────────────────────────────────
