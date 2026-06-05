@@ -717,6 +717,8 @@ def mark_qualification_asked(user_id: int) -> None:
 
 def save_lead(user_id: int, interest: str, service: str = "") -> None:
     leads = _load(LEADS_FILE)
+    if str(user_id) not in leads:
+        leads[str(user_id)] = {"asked": True}
     leads[str(user_id)]["interest"] = interest
     if service:
         leads[str(user_id)]["service"] = service
