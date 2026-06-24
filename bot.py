@@ -712,22 +712,16 @@ def get_cost_stats() -> tuple:
 
 # ── Квалификационные вопросы (лиды) ──────────────────────────────────────────
 
-def should_ask_qualification(user_id: int) -> bool:
-    counters = _load(COUNTERS_FILE)
-    total = counters.get(str(user_id), {}).get("total_ever", 0)
+def is_qualified(user_id: int) -> bool:
+    if user_id == ADMIN_ID or user_id in MANAGER_IDS:
+        return True
     leads = _load(LEADS_FILE)
-    already_asked = str(user_id) in leads
-    return total >= MAX_GENERATIONS and not already_asked
-
-def mark_qualification_asked(user_id: int) -> None:
-    leads = _load(LEADS_FILE)
-    leads[str(user_id)] = {"asked": True}
-    _save(LEADS_FILE, leads)
+    return str(user_id) in leads
 
 def save_lead(user_id: int, interest: str, service: str = "") -> None:
     leads = _load(LEADS_FILE)
     if str(user_id) not in leads:
-        leads[str(user_id)] = {"asked": True}
+        leads[str(user_id)] = {}
     leads[str(user_id)]["interest"] = interest
     if service:
         leads[str(user_id)]["service"] = service
@@ -1069,15 +1063,26 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 _save(STUDIOS_FILE, studios)
 
     if is_new:
-
         await send_user_card(context.bot, user_id)
 
-    await update.message.reply_text(
-        "👋 Привет! За пару кликов покажу как будет выглядеть твоя машина "
-        "после тюнинга — меняй цвет, диски, тонировку и обвес прямо здесь.\n\n"
-        "Это бесплатно и работает на AI 🤖\n\n"
-        "📸 Загрузи фото своей машины — и начнём!"
-    )
+    if is_qualified(user_id):
+        await update.message.reply_text(
+            "👋 Привет! Загрузи фото своей машины — покажу как она будет выглядеть после тюнинга 🎨\n\n"
+            "📸 Отправь фото прямо сюда:"
+        )
+    else:
+        await update.message.reply_text(
+            "👋 Привет!\n\n"
+            "Покажу как будет выглядеть твоя машина после тюнинга — "
+            "меняй цвет, диски, тонировку и обвес прямо здесь.\n\n"
+            "Бесплатно, работает на AI 🤖\n\n"
+            "Пара вопросов перед стартом 🙂\n\n"
+            "У тебя есть автомобиль?",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("✅ Да, есть", callback_data="qual_car|yes")],
+                [InlineKeyboardButton("❌ Нет", callback_data="qual_car|no")],
+            ]),
+        )
 
 
 async def cmd_referral(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1126,8 +1131,22 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         user_states[user_id] = {
             "photo_id": None,
             "selections": DEFAULT_SELECTIONS.copy(),
+            "custom_design": "",
+            "awaiting_custom_design": False,
         }
     user_states[user_id]["photo_id"] = update.message.photo[-1].file_id
+
+    if not is_qualified(user_id):
+        await update.message.reply_text(
+            "Фото сохранено! Осталось ответить на пару вопросов 🙂\n\n"
+            "У тебя есть автомобиль?",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("✅ Да, есть", callback_data="qual_car|yes")],
+                [InlineKeyboardButton("❌ Нет", callback_data="qual_car|no")],
+            ]),
+        )
+        return
+
     info = get_generation_info(user_id)
     await update.message.reply_text(
         f"✅ Фото получено! Доступно генераций: {info['total_left']}\n\n"
@@ -1143,22 +1162,59 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     data = query.data
 
     # Квалификационные вопросы — не требуют user_states
+    if data.startswith("qual_car|"):
+        answer = data[9:]
+        if answer == "no":
+            save_lead(user_id, "no_car")
+            state = user_states.get(user_id, {})
+            if state.get("photo_id"):
+                info = get_generation_info(user_id)
+                await query.edit_message_text(
+                    "Понятно! Ты всё равно можешь попробовать — "
+                    "посмотри как любая машина будет выглядеть после тюнинга 😊\n\n"
+                    f"Доступно генераций: {info['total_left']}\n\n"
+                    "Выбери услуги и нажми 🎨 Сгенерировать визуализацию:",
+                    reply_markup=main_menu(state["selections"]),
+                )
+            else:
+                await query.edit_message_text(
+                    "Понятно! Ты всё равно можешь попробовать — "
+                    "посмотри как любая машина будет выглядеть после тюнинга 😊\n\n"
+                    "📸 Загрузи фото машины — и начнём!"
+                )
+        else:
+            await query.edit_message_text(
+                "Нуждается ли она сейчас в уходе за кузовом?",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("✅ Да, давно пора", callback_data="qual|yes")],
+                    [InlineKeyboardButton("🤔 Думаю об этом", callback_data="qual|maybe")],
+                    [InlineKeyboardButton("❌ Пока нет", callback_data="qual|no")],
+                ]),
+            )
+        return
+
     if data.startswith("qual|"):
         answer = data[5:]
         if answer == "no":
             save_lead(user_id, "no")
-            ref_link = f"https://t.me/{BOT_USERNAME}?start=ref_{user_id}"
-            await query.edit_message_text(
-                "Окей! Если надумаешь — мы здесь 😊\n\n"
-                "Пригласи друга и получи +3 генерации бесплатно 👇",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🔗 Пригласить друга", url=f"https://t.me/share/url?url={quote(ref_link)}")],
-                ]),
-            )
+            state = user_states.get(user_id, {})
+            if state.get("photo_id"):
+                info = get_generation_info(user_id)
+                await query.edit_message_text(
+                    "Окей! Если надумаешь — мы здесь 😊\n\n"
+                    f"Доступно генераций: {info['total_left']}\n\n"
+                    "Выбери услуги и нажми 🎨 Сгенерировать визуализацию:",
+                    reply_markup=main_menu(state["selections"]),
+                )
+            else:
+                await query.edit_message_text(
+                    "Окей! Если надумаешь — мы здесь 😊\n\n"
+                    "📸 Загрузи фото своей машины — покажу визуализацию тюнинга!"
+                )
         else:
             save_lead(user_id, answer)
             await query.edit_message_text(
-                "Что интересует больше всего?",
+                "Отлично! И последний вопрос — что интересует больше всего?",
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton("🎨 Оклейка плёнкой", callback_data="lead|Оклейка плёнкой")],
                     [InlineKeyboardButton("✨ Полировка кузова", callback_data="lead|Полировка кузова")],
@@ -1174,11 +1230,21 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if data.startswith("lead|"):
         service = data[5:]
         save_lead(user_id, "interested", service)
-        await query.edit_message_text(
-            "Отлично! Скоро свяжемся с тобой\n"
-            "и сориентируем по стоимости услуг 😊"
-        )
         await send_hot_lead(context.bot, query.from_user, service)
+        state = user_states.get(user_id, {})
+        if state.get("photo_id"):
+            info = get_generation_info(user_id)
+            await query.edit_message_text(
+                "Отлично! Скоро свяжемся с тобой и сориентируем по стоимости 😊\n\n"
+                f"Доступно генераций: {info['total_left']}\n\n"
+                "Выбери услуги и нажми 🎨 Сгенерировать визуализацию:",
+                reply_markup=main_menu(state["selections"]),
+            )
+        else:
+            await query.edit_message_text(
+                "Отлично! Скоро свяжемся с тобой и сориентируем по стоимости 😊\n\n"
+                "📸 Теперь загрузи фото своей машины — покажу визуализацию тюнинга!"
+            )
         return
 
     if user_id not in user_states:
@@ -1429,21 +1495,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             reply_markup=result_keyboard,
         )
 
-        if not is_manager and should_ask_qualification(user_id):
-            mark_qualification_asked(user_id)
-            await context.bot.send_message(
-                chat_id=query.message.chat_id,
-                text=(
-                    "Кстати, хочу спросить 🙂\n\n"
-                    "Твоя машина сейчас нуждается\n"
-                    "в уходе?"
-                ),
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("✅ Да, давно пора", callback_data="qual|yes")],
-                    [InlineKeyboardButton("🤔 Думаю об этом", callback_data="qual|maybe")],
-                    [InlineKeyboardButton("❌ Пока нет", callback_data="qual|no")],
-                ]),
-            )
 
 
 async def handle_pre_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1697,14 +1748,15 @@ async def daily_studio_job(context) -> None:
 async def cmd_test_qual(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.effective_user.id != ADMIN_ID:
         return
+    # Сбрасываем квалификацию для теста
+    leads = _load(LEADS_FILE)
+    leads.pop(str(update.effective_user.id), None)
+    _save(LEADS_FILE, leads)
     await update.message.reply_text(
-        "Кстати, хочу спросить 🙂\n\n"
-        "Твоя машина сейчас нуждается\n"
-        "в уходе?",
+        "Пара вопросов перед стартом 🙂\n\nУ тебя есть автомобиль?",
         reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("✅ Да, давно пора", callback_data="qual|yes")],
-            [InlineKeyboardButton("🤔 Думаю об этом", callback_data="qual|maybe")],
-            [InlineKeyboardButton("❌ Пока нет", callback_data="qual|no")],
+            [InlineKeyboardButton("✅ Да, есть", callback_data="qual_car|yes")],
+            [InlineKeyboardButton("❌ Нет", callback_data="qual_car|no")],
         ]),
     )
 
