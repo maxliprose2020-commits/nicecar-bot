@@ -1235,15 +1235,15 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         if state.get("photo_id"):
             info = get_generation_info(user_id)
             await query.edit_message_text(
-                "Отлично! Скоро свяжемся с тобой и сориентируем по стоимости 😊\n\n"
+                "Спасибо за ответы! 🙏\n\n"
                 f"Доступно генераций: {info['total_left']}\n\n"
                 "Выбери услуги и нажми 🎨 Сгенерировать визуализацию:",
                 reply_markup=main_menu(state["selections"]),
             )
         else:
             await query.edit_message_text(
-                "Отлично! Скоро свяжемся с тобой и сориентируем по стоимости 😊\n\n"
-                "📸 Теперь загрузи фото своей машины — покажу визуализацию тюнинга!"
+                "Спасибо за ответы! 🙏\n\n"
+                "📸 Загрузи фото своей машины — покажу визуализацию тюнинга!"
             )
         return
 
