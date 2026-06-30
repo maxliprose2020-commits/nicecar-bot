@@ -36,17 +36,18 @@ MANAGER_IDS = set(
 
 openai_client = OpenAI(api_key=OPENAI_API_KEY)
 
-COUNTERS_FILE = "counters.json"
-USERS_FILE = "users.json"
-REFERRALS_FILE = "referrals.json"
-PURCHASES_FILE = "purchases.json"
-BLOGGERS_FILE = "bloggers.json"
-CARDS_FILE = "user_cards.json"
-MANAGER_STATS_FILE = "manager_stats.json"
-MANAGER_CARDS_FILE = "manager_cards.json"
-COSTS_FILE = "costs.json"
-LEADS_FILE = "leads.json"
-STUDIOS_FILE = "studios.json"
+DATA_DIR = os.environ.get("DATA_DIR", ".")
+COUNTERS_FILE = f"{DATA_DIR}/counters.json"
+USERS_FILE = f"{DATA_DIR}/users.json"
+REFERRALS_FILE = f"{DATA_DIR}/referrals.json"
+PURCHASES_FILE = f"{DATA_DIR}/purchases.json"
+BLOGGERS_FILE = f"{DATA_DIR}/bloggers.json"
+CARDS_FILE = f"{DATA_DIR}/user_cards.json"
+MANAGER_STATS_FILE = f"{DATA_DIR}/manager_stats.json"
+MANAGER_CARDS_FILE = f"{DATA_DIR}/manager_cards.json"
+COSTS_FILE = f"{DATA_DIR}/costs.json"
+LEADS_FILE = f"{DATA_DIR}/leads.json"
+STUDIOS_FILE = f"{DATA_DIR}/studios.json"
 MAX_GENERATIONS = 3
 COST_PER_GENERATION = 0.042  # USD, gpt-image-1 1024x1024 medium quality
 
