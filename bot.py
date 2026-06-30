@@ -7,7 +7,7 @@ from datetime import date, datetime
 from urllib.parse import quote
 from PIL import Image, ImageDraw, ImageFont
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice, BotCommand, BotCommandScopeDefault, BotCommandScopeChat
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -1639,6 +1639,7 @@ async def cmd_trial(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     studio = create_studio(name, telegram_id, contact)
     link = f"https://t.me/{BOT_USERNAME}?start=studio_{name}"
+    await set_studio_commands(context.bot, telegram_id)
     try:
         await context.bot.send_message(
             chat_id=telegram_id,
@@ -1654,7 +1655,13 @@ async def cmd_trial(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
         await context.bot.send_message(
             chat_id=telegram_id,
-            text="Чтобы получать лиды убедитесь что ваш Telegram ID правильный.\nПроверить свой ID: @userinfobot",
+            text=(
+                "Доступные команды:\n"
+                "/mystats — ваша статистика\n"
+                "/mylink — ваша реферальная ссылка\n\n"
+                "Чтобы получать лиды убедитесь что ваш Telegram ID правильный.\n"
+                "Проверить свой ID: @userinfobot"
+            ),
         )
     except Exception as e:
         logger.error("Ошибка отправки студии: %s", e)
@@ -1767,8 +1774,49 @@ async def cmd_chatid(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
 # ── Запуск ────────────────────────────────────────────────────────────────────
 
+STUDIO_COMMANDS = [
+    BotCommand("mystats", "📊 Моя статистика"),
+    BotCommand("mylink", "🔗 Моя ссылка"),
+]
+
+async def set_studio_commands(bot, telegram_id: int) -> None:
+    try:
+        await bot.set_my_commands(
+            STUDIO_COMMANDS,
+            scope=BotCommandScopeChat(chat_id=telegram_id),
+        )
+    except Exception as e:
+        logger.error("Ошибка установки команд студии %s: %s", telegram_id, e)
+
+
+async def post_init(app: Application) -> None:
+    await app.bot.set_my_commands([
+        BotCommand("start", "🏠 Главное меню"),
+        BotCommand("referral", "🔗 Пригласить друга (+3 генерации)"),
+    ], scope=BotCommandScopeDefault())
+    await app.bot.set_my_commands([
+        BotCommand("start", "🏠 Главное меню"),
+        BotCommand("referral", "🔗 Пригласить друга (+3 генерации)"),
+        BotCommand("stats", "📊 Статистика бота"),
+        BotCommand("broadcast", "📢 Рассылка"),
+        BotCommand("add_blogger", "➕ Добавить блогера"),
+        BotCommand("blogger_stats", "📈 Статистика блогеров"),
+        BotCommand("trial", "🏢 Создать студию"),
+        BotCommand("mystats", "📉 Статистика студии"),
+        BotCommand("mylink", "🔗 Ссылка студии"),
+        BotCommand("test_qual", "🧪 Тест квалификации"),
+        BotCommand("chatid", "🆔 Узнать Chat ID"),
+        BotCommand("cancel", "❌ Отмена"),
+    ], scope=BotCommandScopeChat(chat_id=ADMIN_ID))
+    # Устанавливаем команды для всех существующих студий
+    studios = _load(STUDIOS_FILE)
+    for studio in studios.values():
+        if studio.get("status") == "trial":
+            await set_studio_commands(app.bot, studio["telegram_id"])
+
+
 def main() -> None:
-    app = Application.builder().token(TELEGRAM_TOKEN).build()
+    app = Application.builder().token(TELEGRAM_TOKEN).post_init(post_init).build()
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("referral", cmd_referral))
     app.add_handler(CommandHandler("stats", cmd_stats))
