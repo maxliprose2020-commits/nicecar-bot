@@ -1,4 +1,5 @@
 import os
+import asyncio
 import io
 import base64
 import json
@@ -1453,7 +1454,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             orig_img.save(photo_io, format="PNG")
             photo_io.seek(0)
             photo_io.name = "car.png"
-            response = openai_client.images.edit(
+            response = await asyncio.to_thread(
+                openai_client.images.edit,
                 model="gpt-image-2",
                 image=photo_io,
                 prompt=prompt,
