@@ -1457,7 +1457,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 model="gpt-image-2",
                 image=photo_io,
                 prompt=prompt,
-                size="1024x1024",
+                size="1536x1024",
                 quality="medium",
                 n=1,
             )
