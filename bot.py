@@ -1450,6 +1450,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             photo_file = await context.bot.get_file(state["photo_id"])
             photo_data = await photo_file.download_as_bytearray()
             orig_img = Image.open(io.BytesIO(bytes(photo_data))).convert("RGB")
+            orig_img.thumbnail((1024, 1024))
             photo_io = io.BytesIO()
             orig_img.save(photo_io, format="PNG")
             photo_io.seek(0)
