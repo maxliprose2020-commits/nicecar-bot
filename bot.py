@@ -49,7 +49,7 @@ COSTS_FILE = f"{DATA_DIR}/costs.json"
 LEADS_FILE = f"{DATA_DIR}/leads.json"
 STUDIOS_FILE = f"{DATA_DIR}/studios.json"
 MAX_GENERATIONS = 3
-COST_PER_GENERATION = 0.042  # USD, gpt-image-1 1024x1024 medium quality
+COST_PER_GENERATION = 0.042  # USD, gpt-image-2 1024x1024 medium quality
 
 STARS_PACKAGES = [
     {"stars": 75,  "generations": 10, "payload": "buy_10", "label": "10 генераций — 75 ⭐"},
@@ -1454,7 +1454,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             photo_io.seek(0)
             photo_io.name = "car.png"
             response = openai_client.images.edit(
-                model="gpt-image-1",
+                model="gpt-image-2",
                 image=photo_io,
                 prompt=prompt,
                 size="1024x1024",
