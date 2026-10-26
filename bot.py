@@ -212,6 +212,7 @@ ANGLE_OPTIONS = {
 }
 
 BACKGROUND_OPTIONS = {
+    "original":    "Оригинал (как на фото)",
     "night_city":  "Ночной город",
     "mountains":   "Горы",
     "track":       "Трасса",
@@ -347,6 +348,7 @@ ANGLE_EN = {
 }
 
 BACKGROUND_EN = {
+    "original":    "keep the ORIGINAL background from the input photo exactly as it is — same place, surroundings, buildings, lighting and weather; do not replace or stylize it",
     "night_city":  "night city with neon lights and bokeh",
     "mountains":   "scenic mountain landscape",
     "track":       "racing track",
