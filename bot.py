@@ -25,6 +25,8 @@ logging.basicConfig(
     level=logging.INFO,
 )
 logger = logging.getLogger(__name__)
+# Не писать URL запросов к Telegram в логи (в них виден токен бота)
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
@@ -48,9 +50,14 @@ MANAGER_STATS_FILE = f"{DATA_DIR}/manager_stats.json"
 MANAGER_CARDS_FILE = f"{DATA_DIR}/manager_cards.json"
 COSTS_FILE = f"{DATA_DIR}/costs.json"
 LEADS_FILE = f"{DATA_DIR}/leads.json"
-STUDIOS_FILE = f"{DATA_DIR}/studios.json"
+STUDIOS_FILE   = f"{DATA_DIR}/studios.json"
+MANAGERS_FILE  = f"{DATA_DIR}/managers.json"
 MAX_GENERATIONS = 3
 COST_PER_GENERATION = 0.042  # USD, gpt-image-2 1024x1024 medium quality
+
+PLAN_LIMITS    = {"starter": 600, "business": 1500, "pro": 3000}
+PLAN_NAMES     = {"starter": "Старт", "business": "Бизнес", "pro": "Про"}
+MANAGER_LIMITS = {"trial": 2, "starter": 2, "business": 5, "pro": 10}
 
 STARS_PACKAGES = [
     {"stars": 75,  "generations": 10, "payload": "buy_10", "label": "10 генераций — 75 ⭐"},
@@ -371,63 +378,113 @@ DEFAULT_SELECTIONS = {
 # user_id → {"photo_id": str | None, "selections": dict, "custom_design": str, "awaiting_custom_design": bool}
 user_states: dict[int, dict] = {}
 admin_state: dict[int, str] = {}
+class _PersistentState:
+    """Состояние «ждём ответ от владельца студии», хранится в файле — не теряется при перезапуске бота."""
+    def __init__(self, filename: str):
+        self.filename = filename
+
+    @property
+    def path(self) -> str:
+        return f"{DATA_DIR}/{self.filename}"
+
+    def __contains__(self, key) -> bool:
+        return str(key) in _load(self.path)
+
+    def __setitem__(self, key, value) -> None:
+        d = _load(self.path)
+        d[str(key)] = value
+        _save(self.path, d)
+
+    def pop(self, key, *default):
+        d = _load(self.path)
+        if str(key) in d:
+            value = d.pop(str(key))
+            _save(self.path, d)
+            return value
+        if default:
+            return default[0]
+        raise KeyError(key)
+
+
+owner_contact_state = _PersistentState("owner_contact_state.json")  # telegram_id → studio_name, ожидание @username
+owner_logo_state = _PersistentState("owner_logo_state.json")        # telegram_id → studio_name, ожидание логотипа
+pending_start = _PersistentState("pending_start.json")              # user_id → start-аргумент до согласия
 
 
 # ── Водяной знак ──────────────────────────────────────────────────────────────
 
 LOGO_PATH = "logo.png"
 
-def add_watermark(image_bytes: io.BytesIO) -> io.BytesIO:
+def _paste_logo(img: Image.Image, logo_path: str) -> Image.Image:
+    """Накладывает логотип из файла на изображение (левый верхний угол, 80% прозрачность)."""
+    logo = Image.open(logo_path).convert("RGBA")
+    data = logo.getdata()
+    new_data = []
+    for r, g, b, a in data:
+        if r > 220 and g > 220 and b > 220:
+            new_data.append((r, g, b, 0))
+        else:
+            new_data.append((r, g, b, a))
+    logo.putdata(new_data)
+    logo_w = img.width // 4
+    logo_h = int(logo.height * logo_w / logo.width)
+    logo = logo.resize((logo_w, logo_h), Image.LANCZOS)
+    r, g, b, a = logo.split()
+    a = a.point(lambda x: int(x * 0.80))
+    logo = Image.merge("RGBA", (r, g, b, a))
+    img.paste(logo, (16, 16), logo)
+    return img
+
+
+def add_watermark(image_bytes: io.BytesIO, studio_name: str = None) -> io.BytesIO:
+    """
+    studio_name=None  → логотип NiceCar (logo.png)
+    статус "trial"    → без логотипа
+    статус "active" + logo_path → логотип студии
+    статус "active" без логотипа → без логотипа
+    """
     img = Image.open(image_bytes).convert("RGBA")
 
-    if os.path.exists(LOGO_PATH):
-        logo = Image.open(LOGO_PATH).convert("RGBA")
-        # Делаем белый фон прозрачным
-        data = logo.getdata()
-        new_data = []
-        for r, g, b, a in data:
-            if r > 220 and g > 220 and b > 220:
-                new_data.append((r, g, b, 0))
-            else:
-                new_data.append((r, g, b, a))
-        logo.putdata(new_data)
-        # Размер: 1/4 ширины изображения
-        logo_w = img.width // 4
-        logo_h = int(logo.height * logo_w / logo.width)
-        logo = logo.resize((logo_w, logo_h), Image.LANCZOS)
-        # Полупрозрачность 80%
-        r, g, b, a = logo.split()
-        a = a.point(lambda x: int(x * 0.80))
-        logo = Image.merge("RGBA", (r, g, b, a))
-        pad = 16
-        x = pad
-        y = pad
-        img.paste(logo, (x, y), logo)
+    if studio_name:
+        studios = _load(STUDIOS_FILE)
+        st = studios.get(studio_name, {})
+        status = st.get("status", "")
+        if status == "trial":
+            pass  # без логотипа
+        elif status == "active":
+            logo_path = st.get("logo_path", "")
+            if logo_path and os.path.exists(logo_path):
+                img = _paste_logo(img, logo_path)
+            # иначе — без логотипа до загрузки
+        # expired — без логотипа
     else:
-        # Фолбэк — текст если лого нет
-        overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
-        draw = ImageDraw.Draw(overlay)
-        text = "NiceCar Center"
-        font_size = max(28, img.width // 22)
-        font = None
-        for path in [
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-            "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
-        ]:
-            try:
-                font = ImageFont.truetype(path, font_size)
-                break
-            except Exception:
-                pass
-        if font is None:
-            font = ImageFont.load_default()
-        bbox = draw.textbbox((0, 0), text, font=font)
-        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-        pad = 16
-        x, y = img.width - tw - pad, img.height - th - pad
-        draw.text((x + 1, y + 1), text, font=font, fill=(0, 0, 0, 120))
-        draw.text((x, y), text, font=font, fill=(255, 255, 255, 200))
-        img = Image.alpha_composite(img, overlay)
+        # Пользователь без студии → логотип NiceCar
+        if os.path.exists(LOGO_PATH):
+            img = _paste_logo(img, LOGO_PATH)
+        else:
+            overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
+            draw = ImageDraw.Draw(overlay)
+            text = "NiceCar Center"
+            font_size = max(28, img.width // 22)
+            font = None
+            for path in [
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+                "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+            ]:
+                try:
+                    font = ImageFont.truetype(path, font_size)
+                    break
+                except Exception:
+                    pass
+            if font is None:
+                font = ImageFont.load_default()
+            bbox = draw.textbbox((0, 0), text, font=font)
+            tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+            pad = 16
+            x, y = img.width - tw - pad, img.height - th - pad
+            draw.text((x + 1, y + 1), text, font=font, fill=(0, 0, 0, 120))
+            draw.text((x, y), text, font=font, fill=(255, 255, 255, 200))
+            img = Image.alpha_composite(img, overlay)
 
     out = io.BytesIO()
     img.convert("RGB").save(out, format="JPEG", quality=95)
@@ -472,6 +529,83 @@ def get_user_name(user_id: int) -> str:
     username = u.get("username", "")
     return f"{name} @{username}" if username else name
 
+# ── Источник пользователя (откуда пришёл) ─────────────────────────────────────
+
+def parse_source(arg: str) -> dict:
+    if arg.startswith("blogger_"):
+        return {"type": "blogger", "name": arg[8:]}
+    if arg.startswith("studio_"):
+        return {"type": "studio", "name": arg[7:]}
+    if arg.startswith("ref_"):
+        try:
+            rid = int(arg[4:])
+        except ValueError:
+            return {"type": "organic"}
+        users = _load(USERS_FILE)
+        ref = users.get(str(rid), {})
+        src = {"type": "friend", "referrer_id": rid, "referrer_name": get_user_name(rid)}
+        via = ref.get("source")
+        if via and via.get("type") in ("blogger", "studio"):
+            src["via"] = {"type": via["type"], "name": via.get("name", "")}
+        elif via and via.get("type") == "friend" and via.get("via"):
+            src["via"] = via["via"]
+        return src
+    return {"type": "organic"}
+
+def set_user_source(user_id: int, arg: str) -> None:
+    """Первое касание: записывается один раз и больше не меняется."""
+    users = _load(USERS_FILE)
+    key = str(user_id)
+    if key in users and "source" not in users[key]:
+        users[key]["source"] = parse_source(arg or "")
+        users[key]["source"]["date"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+        _save(USERS_FILE, users)
+
+def set_last_click(user_id: int, arg: str) -> None:
+    users = _load(USERS_FILE)
+    key = str(user_id)
+    if key in users:
+        src = parse_source(arg)
+        src["date"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+        users[key]["last_click"] = src
+        _save(USERS_FILE, users)
+
+def get_user_source(user_id: int) -> dict:
+    return _load(USERS_FILE).get(str(user_id), {}).get("source") or {}
+
+def _source_part(src: dict) -> str:
+    t = src.get("type")
+    if t == "blogger":
+        return f"блогер {src.get('name', '')}"
+    if t == "studio":
+        return f"студия {src.get('name', '')}"
+    return ""
+
+def source_label(user_id: int) -> str:
+    src = get_user_source(user_id)
+    t = src.get("type")
+    if not t:
+        return "до учёта источников"
+    if t in ("blogger", "studio"):
+        return _source_part(src)
+    if t == "friend":
+        text = f"друг {src.get('referrer_name', src.get('referrer_id', ''))}"
+        if src.get("via"):
+            text += f" (пришёл от: {_source_part(src['via'])})"
+        return text
+    return "сам нашёл бота"
+
+def source_blogger(user_id: int) -> str:
+    """Имя блогера/площадки, к которому относится пользователь (напрямую или через друга)."""
+    src = get_user_source(user_id)
+    if src.get("type") == "blogger":
+        return src.get("name", "")
+    via = src.get("via") or {}
+    if via.get("type") == "blogger":
+        return via.get("name", "")
+    return ""
+
+
 def build_card_text(user_id: int) -> str:
     users = _load(USERS_FILE)
     u = users.get(str(user_id), {})
@@ -500,7 +634,8 @@ def build_card_text(user_id: int) -> str:
         f"👤 Новый пользователь — Найскар Центр\n\n"
         f"🆔 {id_line}\n"
         f"📱 ID: {user_id}\n"
-        f"⏰ {joined_time}\n\n"
+        f"⏰ {joined_time}\n"
+        f"📍 Источник: {source_label(user_id)}\n\n"
         f"🎨 Генераций сделал: {gen_count}\n"
         f"💸 Расходы на AI: ${user_cost:.3f}\n"
         f"🔗 Поделился с другом: {shared_icon}\n"
@@ -718,18 +853,25 @@ def get_cost_stats() -> tuple:
 # ── Квалификационные вопросы (лиды) ──────────────────────────────────────────
 
 def is_qualified(user_id: int) -> bool:
-    if user_id == ADMIN_ID or user_id in MANAGER_IDS:
+    if user_id == ADMIN_ID or is_manager(user_id):
         return True
     leads = _load(LEADS_FILE)
     return str(user_id) in leads
 
 def save_lead(user_id: int, interest: str, service: str = "") -> None:
     leads = _load(LEADS_FILE)
-    if str(user_id) not in leads:
-        leads[str(user_id)] = {}
-    leads[str(user_id)]["interest"] = interest
+    key = str(user_id)
+    if key not in leads:
+        leads[key] = {}
+    leads[key]["interest"] = interest
+    leads[key]["date"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+    studio = get_user_studio(user_id)
+    if studio:
+        leads[key]["studio"] = studio
     if service:
-        leads[str(user_id)]["service"] = service
+        leads[key]["service"] = service
+    leads[key].setdefault("price_requested", False)
+    leads[key]["source"] = source_label(user_id)
     _save(LEADS_FILE, leads)
 
 async def send_hot_lead(bot, user, service: str) -> None:
@@ -752,12 +894,22 @@ async def send_hot_lead(bot, user, service: str) -> None:
                     f"📱 ID: {user.id}\n"
                     f"⏰ {now}\n\n"
                     f"🚗 Интерес: {service}\n"
+                    f"📍 Источник: {source_label(user.id)}\n"
                     f"🔗 Написать клиенту: {link}\n\n"
                     f"📊 Генераций: {used} из {limit} использовано"
                 ),
             )
         except Exception as e:
             logger.error("Ошибка отправки лида студии: %s", e)
+        # Копия каждого лида в ADMIN_ID
+        try:
+            await bot.send_message(
+                chat_id=ADMIN_ID,
+                text=f"📋 Копия — {studio_name}\n👤 Новый лид\n🆔 {username}\n🚗 {service}\n📍 Источник: {source_label(user.id)}\n⏰ {now}\n🔗 {link}",
+                disable_notification=True,
+            )
+        except Exception:
+            pass
     else:
         try:
             await bot.send_message(
@@ -766,6 +918,7 @@ async def send_hot_lead(bot, user, service: str) -> None:
                     f"🔥 Горячий лид!\n\n"
                     f"👤 {username}\n"
                     f"🚗 Интерес: {service}\n"
+                    f"📍 Источник: {source_label(user.id)}\n"
                     f"⏰ {now}\n\n"
                     f"{link}"
                 ),
@@ -865,6 +1018,40 @@ async def notify_studio_limit_reached(bot, studio_name: str) -> None:
         logger.error("Ошибка уведомления о лимите студии: %s", e)
 
 
+# ── Запросы стоимости ────────────────────────────────────────────────────────
+
+def format_selections_short(sel: dict) -> str:
+    parts = []
+    body = sel.get("body", "original")
+    finish = sel.get("finish", "matte")
+    if body != "original":
+        parts.append(f"{BODY_OPTIONS.get(body, body)} {FINISH_OPTIONS.get(finish, finish)}")
+    else:
+        parts.append(FINISH_OPTIONS.get(finish, finish))
+    if sel.get("wheels", "original") != "original":
+        parts.append(f"диски: {WHEELS_OPTIONS.get(sel['wheels'], sel['wheels'])}")
+    if sel.get("tint", "none") != "none":
+        parts.append(TINT_OPTIONS.get(sel["tint"], sel["tint"]))
+    if sel.get("bodykit", "none") != "none":
+        parts.append(BODYKIT_OPTIONS.get(sel["bodykit"], sel["bodykit"]))
+    return ", ".join(p for p in parts if p) or "не указаны"
+
+def track_price_request(studio_name: str) -> None:
+    if not studio_name:
+        return
+    studios = _load(STUDIOS_FILE)
+    if studio_name in studios:
+        studios[studio_name]["price_requests"] = studios[studio_name].get("price_requests", 0) + 1
+        _save(STUDIOS_FILE, studios)
+
+def mark_lead_price_requested(user_id: int) -> None:
+    leads = _load(LEADS_FILE)
+    key = str(user_id)
+    if key in leads:
+        leads[key]["price_requested"] = True
+        _save(LEADS_FILE, leads)
+
+
 # ── Блогеры ──────────────────────────────────────────────────────────────────
 
 def blogger_track_click(name: str, user_id: int) -> None:
@@ -891,6 +1078,104 @@ def blogger_track_purchase(user_id: int) -> None:
         if key in info.get("clicks", []) and key not in info.get("purchased", []):
             info.setdefault("purchased", []).append(key)
     _save(BLOGGERS_FILE, data)
+
+
+# ── Менеджеры ────────────────────────────────────────────────────────────────
+
+def _load_managers() -> dict:
+    data = _load(MANAGERS_FILE)
+    data.setdefault("nicecar", {})
+    data.setdefault("studios", {})
+    data.setdefault("invites", {})
+    return data
+
+def is_manager(user_id: int) -> bool:
+    if user_id in MANAGER_IDS:
+        return True
+    mgrs = _load_managers()
+    key = str(user_id)
+    if key in mgrs["nicecar"]:
+        return True
+    for studio_mgrs in mgrs["studios"].values():
+        if key in studio_mgrs:
+            return True
+    return False
+
+def get_manager_studio(user_id: int) -> str | None:
+    """Возвращает имя студии, если пользователь — менеджер студии; None для NiceCar-менеджеров."""
+    if user_id in MANAGER_IDS:
+        return None
+    mgrs = _load_managers()
+    key = str(user_id)
+    if key in mgrs["nicecar"]:
+        return None
+    for sname, studio_mgrs in mgrs["studios"].items():
+        if key in studio_mgrs:
+            return sname
+    return None
+
+def can_manage_scope(user_id: int, scope: str) -> bool:
+    """Админ управляет всеми менеджерами, владелец студии — только своими."""
+    if user_id == ADMIN_ID:
+        return True
+    if scope == "nicecar":
+        return False
+    studio = get_studio_by_owner(user_id)
+    return bool(studio and studio.get("name") == scope)
+
+def _manager_limit_for_studio(studio: dict) -> int:
+    plan = studio.get("plan", "")
+    status = studio.get("status", "trial")
+    return MANAGER_LIMITS.get(plan if status == "active" else "trial", 2)
+
+async def _show_managers_list(source, context, studio_name: str | None) -> None:
+    """source: update.message или CallbackQuery."""
+    is_cb = hasattr(source, "edit_message_text")
+    mgrs = _load_managers()
+    stats = _load(MANAGER_STATS_FILE)
+
+    if studio_name is None:
+        managers_dict = mgrs.get("nicecar", {})
+        title = "👥 Менеджеры NiceCar"
+        invite_cb = "invite_mgr|nicecar"
+        limit_line = ""
+    else:
+        managers_dict = mgrs.get("studios", {}).get(studio_name, {})
+        st = _load(STUDIOS_FILE).get(studio_name, {})
+        limit = _manager_limit_for_studio(st)
+        title = f"👥 Менеджеры {studio_name}"
+        limit_line = f"\nМенеджеров: {len(managers_dict)} из {limit}"
+        invite_cb = f"invite_mgr|{studio_name}"
+
+    text = title + limit_line + "\n\n"
+    rows = []
+
+    for uid, info in managers_dict.items():
+        name = info.get("name", uid)
+        uname = info.get("username", "")
+        added = info.get("added", "")[:10]
+        gen_count = stats.get(uid, {}).get("count", 0)
+        uname_text = f" @{uname}" if uname else ""
+        text += f"👤 {name}{uname_text}\n   Добавлен: {added} · Генераций: {gen_count}\n\n"
+        rows.append([InlineKeyboardButton(
+            f"❌ Удалить {name}",
+            callback_data=f"del_mgr_confirm|{studio_name or 'nicecar'}|{uid}"
+        )])
+
+    if studio_name is None:
+        for mid in MANAGER_IDS:
+            env_name = get_user_name(mid)
+            text += f"⚙️ {env_name} (из настроек)\n\n"
+
+    if not managers_dict and (studio_name is not None or not MANAGER_IDS):
+        text += "Менеджеров пока нет.\n\n"
+
+    rows.append([InlineKeyboardButton("➕ Добавить менеджера", callback_data=invite_cb)])
+
+    if is_cb:
+        await source.edit_message_text(text, reply_markup=InlineKeyboardMarkup(rows))
+    else:
+        await source.reply_text(text, reply_markup=InlineKeyboardMarkup(rows))
 
 
 # ── Клавиатуры ────────────────────────────────────────────────────────────────
@@ -1033,8 +1318,35 @@ def user_link(user) -> str:
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     user_id = user.id
-    is_new = register_user(user_id, user)
 
+    # Обработка приглашения менеджера до всего
+    if context.args and context.args[0].startswith("mgr_"):
+        await _handle_manager_invite(update, context, user, context.args[0][4:])
+        return
+
+    # Новые пользователи — сначала согласие
+    existing_users = _load(USERS_FILE)
+    if str(user_id) not in existing_users:
+        # Сохраняем start-аргумент для обработки после согласия
+        user_states[user_id] = {
+            "photo_id": None,
+            "selections": DEFAULT_SELECTIONS.copy(),
+            "custom_design": "",
+            "awaiting_custom_design": False,
+            "pending_start_arg": context.args[0] if context.args else "",
+        }
+        pending_start[user_id] = context.args[0] if context.args else ""
+        privacy_text = f"\n\n📄 <a href=\"{PRIVACY_URL}\">Политика конфиденциальности</a>" if PRIVACY_URL else ""
+        await update.message.reply_text(
+            f"👋 Привет!\n\n"
+            f"Нажимая «Начать», ты соглашаешься на обработку своих данных: "
+            f"Telegram-профиля и фото авто. Фото обрабатывает AI-сервис.{privacy_text}",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ Начать", callback_data="consent_start")]]),
+            parse_mode="HTML" if PRIVACY_URL else None,
+        )
+        return
+
+    is_new = False
     user_states[user_id] = {
         "photo_id": None,
         "selections": DEFAULT_SELECTIONS.copy(),
@@ -1059,10 +1371,11 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         elif arg.startswith("blogger_"):
             blogger_name = arg[8:]
             blogger_track_click(blogger_name, user_id)
+            set_last_click(user_id, arg)
         elif arg.startswith("studio_") and is_new:
             studio_name = arg[7:]
             studios = _load(STUDIOS_FILE)
-            if studio_name in studios and studios[studio_name]["status"] == "trial":
+            if studio_name in studios and studios[studio_name]["status"] in ("trial", "active"):
                 set_user_studio(user_id, studio_name)
                 studios[studio_name]["users_count"] = studios[studio_name].get("users_count", 0) + 1
                 _save(STUDIOS_FILE, studios)
@@ -1130,8 +1443,53 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
+async def _save_studio_logo(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, is_document: bool = False) -> None:
+    """Сохраняет логотип студии, убирает белый фон, отвечает владельцу."""
+    studio_name = owner_logo_state.pop(user_id, None)
+    if not studio_name:
+        return
+    try:
+        if is_document:
+            file_obj = await update.message.document.get_file()
+        else:
+            file_obj = await update.message.photo[-1].get_file()
+        raw = await file_obj.download_as_bytearray()
+        img = Image.open(io.BytesIO(bytes(raw))).convert("RGBA")
+        data = img.getdata()
+        new_data = [(r, g, b, 0) if r > 220 and g > 220 and b > 220 else (r, g, b, a) for r, g, b, a in data]
+        img.putdata(new_data)
+        logos_dir = os.path.join(DATA_DIR, "logos")
+        os.makedirs(logos_dir, exist_ok=True)
+        logo_path = os.path.join(logos_dir, f"{studio_name}.png")
+        img.save(logo_path, format="PNG")
+        studios = _load(STUDIOS_FILE)
+        studios[studio_name]["logo_path"] = logo_path
+        studios[studio_name].pop("logo_remind_count", None)
+        _save(STUDIOS_FILE, studios)
+        await update.message.reply_text("✅ Логотип сохранён! Он будет добавлен на все визуализации ваших клиентов.")
+    except Exception as e:
+        logger.error("Ошибка сохранения логотипа %s: %s", studio_name, e)
+        await update.message.reply_text("Ошибка при обработке изображения. Попробуйте ещё раз.")
+
+
+async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+    if user_id not in owner_logo_state:
+        return
+    doc = update.message.document
+    if doc and doc.mime_type in ("image/png", "image/jpeg"):
+        await _save_studio_logo(update, context, user_id, is_document=True)
+    else:
+        await update.message.reply_text("Пожалуйста, отправьте PNG или JPG файл.")
+
+
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
+
+    # Логотип студии (владелец ответил на запрос /logo или /activate)
+    if user_id in owner_logo_state:
+        await _save_studio_logo(update, context, user_id, is_document=False)
+        return
 
     # Рассылка с фото
     if user_id == ADMIN_ID and admin_state.get(ADMIN_ID) == "awaiting_broadcast":
@@ -1280,11 +1638,80 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             )
         return
 
-    if user_id not in user_states:
+    if data == "consent_start":
+        user = query.from_user
+        uid = user.id
+        users = _load(USERS_FILE)
+        if str(uid) not in users:
+            users[str(uid)] = {
+                "name": user.full_name,
+                "username": user.username or "",
+                "joined": str(date.today()),
+                "joined_time": datetime.now().strftime("%H:%M, %d.%m.%Y"),
+                "consent": True,
+                "consent_date": str(date.today()),
+            }
+            _save(USERS_FILE, users)
+            init_user_counter(uid)
+            is_new_user = True
+        else:
+            is_new_user = False
+        arg = pending_start.pop(uid, "") or user_states.get(uid, {}).get("pending_start_arg", "")
+        if uid not in user_states:
+            user_states[uid] = {
+                "photo_id": None,
+                "selections": DEFAULT_SELECTIONS.copy(),
+                "custom_design": "",
+                "awaiting_custom_design": False,
+            }
+        if not is_new_user:
+            arg = ""  # повторное нажатие «Начать» — ссылку не обрабатываем второй раз
+        if is_new_user:
+            set_user_source(uid, arg)
+        if arg.startswith("ref_"):
+            try:
+                referrer_id = int(arg[4:])
+                process_referral(uid, referrer_id)
+                await update_user_card(context.bot, referrer_id)
+                gen_info = get_generation_info(uid)
+                await context.bot.send_message(
+                    chat_id=query.message.chat_id,
+                    text=f"🎁 Ты пришёл по реферальной ссылке — тебе начислено +{gen_info['bonus']} бонусных генераций!"
+                )
+            except ValueError:
+                pass
+        elif arg.startswith("blogger_"):
+            blogger_track_click(arg[8:], uid)
+        elif arg.startswith("studio_"):
+            sname = arg[7:]
+            sts = _load(STUDIOS_FILE)
+            if sname in sts and sts[sname]["status"] in ("trial", "active"):
+                set_user_studio(uid, sname)
+                sts[sname]["users_count"] = sts[sname].get("users_count", 0) + 1
+                _save(STUDIOS_FILE, sts)
+        if is_new_user:
+            await send_user_card(context.bot, uid)
+        if is_qualified(uid):
+            await query.edit_message_text(
+                "👋 Привет! Загрузи фото своей машины — покажу как она будет выглядеть после тюнинга 🎨\n\n📸 Отправь фото прямо сюда:"
+            )
+        else:
+            await query.edit_message_text(
+                "👋 Привет!\n\nПокажу как будет выглядеть твоя машина после тюнинга — меняй цвет, диски, тонировку и обвес прямо здесь.\n\nБесплатно, работает на AI 🤖\n\nПара вопросов перед стартом 🙂\n\nУ тебя есть автомобиль?",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("✅ Да, есть", callback_data="qual_car|yes")],
+                    [InlineKeyboardButton("❌ Нет", callback_data="qual_car|no")],
+                ]),
+            )
+        return
+
+    # Кнопки менеджеров и запроса стоимости работают и после перезапуска бота
+    stateless = data.startswith(("noop", "invite_mgr|", "del_mgr", "price"))
+    if user_id not in user_states and not stateless:
         await query.edit_message_text("Пожалуйста, начни сначала — отправь команду /start")
         return
 
-    state = user_states[user_id]
+    state = user_states.get(user_id) or {"selections": DEFAULT_SELECTIONS.copy()}
     sel = state["selections"]
 
     if data == "cat_body":
@@ -1371,6 +1798,82 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             "Выбери услуги и нажми 🎨 Сгенерировать визуализацию:",
             reply_markup=main_menu(sel),
         )
+    elif data == "noop":
+        pass  # кнопки «из настроек» — не кликабельны по смыслу
+
+    elif data.startswith("invite_mgr|"):
+        import secrets as _sec
+        owner = data[11:]
+        if not can_manage_scope(user_id, owner):
+            return
+        if owner != "nicecar":
+            st_lim = _load(STUDIOS_FILE).get(owner, {})
+            current = len(_load_managers().get("studios", {}).get(owner, {}))
+            if current >= _manager_limit_for_studio(st_lim):
+                await context.bot.send_message(
+                    chat_id=query.message.chat_id,
+                    text="Достигнут лимит менеджеров для вашего тарифа. Для расширения напишите @maxlipai",
+                )
+                return
+        token = _sec.token_hex(8)
+        expires = datetime.now() + timedelta(hours=24)
+        mgrs = _load_managers()
+        mgrs.setdefault("invites", {})[token] = {
+            "owner": owner,
+            "expires": expires.isoformat(),
+            "inviter_id": user_id,
+        }
+        _save(MANAGERS_FILE, mgrs)
+        link = f"https://t.me/{BOT_USERNAME}?start=mgr_{token}"
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text=(
+                f"🔗 Отправьте эту ссылку сотруднику. Он нажмёт — и станет менеджером.\n\n"
+                f"{link}\n\n⏰ Действует 24 часа."
+            ),
+        )
+
+    elif data.startswith("del_mgr_confirm|"):
+        _, scope, uid = data.split("|", 2)
+        if not can_manage_scope(user_id, scope):
+            return
+        mgrs = _load_managers()
+        if scope == "nicecar":
+            info = mgrs.get("nicecar", {}).get(uid, {})
+        else:
+            info = mgrs.get("studios", {}).get(scope, {}).get(uid, {})
+        name_m = info.get("name", uid) if info else uid
+        await query.edit_message_reply_markup(
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(f"✅ Да, удалить {name_m}", callback_data=f"del_mgr|{scope}|{uid}")],
+                [InlineKeyboardButton("❌ Нет", callback_data=f"del_mgr_cancel|{scope}")],
+            ])
+        )
+
+    elif data.startswith("del_mgr|"):
+        _, scope, uid = data.split("|", 2)
+        if not can_manage_scope(user_id, scope):
+            return
+        mgrs = _load_managers()
+        if scope == "nicecar":
+            info = mgrs.get("nicecar", {}).pop(uid, {})
+        else:
+            info = mgrs.get("studios", {}).get(scope, {}).pop(uid, {})
+        removed_name = info.get("name", uid) if info else uid
+        _save(MANAGERS_FILE, mgrs)
+        try:
+            await context.bot.send_message(chat_id=int(uid), text="Доступ менеджера отключён.")
+        except Exception:
+            pass
+        await query.answer(f"Менеджер {removed_name} удалён")
+        await _show_managers_list(query, context, None if scope == "nicecar" else scope)
+
+    elif data.startswith("del_mgr_cancel|"):
+        scope = data[15:]
+        if not can_manage_scope(user_id, scope):
+            return
+        await _show_managers_list(query, context, None if scope == "nicecar" else scope)
+
     elif data == "back_main":
         if query.message.photo:
             await context.bot.send_message(
@@ -1407,13 +1910,128 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             currency="XTR",
             prices=[LabeledPrice(label=pkg["label"], amount=pkg["stars"])],
         )
+    elif data == "price":
+        user = query.from_user
+        username = user.username
+        user_id_str = f"@{username}" if username else f"ID: {user_id}"
+        link = f"t.me/{username}" if username else f"tg://user?id={user_id}"
+        sel_text = format_selections_short(state.get("selections", {}))
+        now = datetime.now().strftime("%H:%M, %d.%m.%Y")
+        studio_name = get_user_studio(user_id)
+        if studio_name:
+            # Студийный пользователь — сначала согласие
+            await query.edit_message_reply_markup(
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("✅ Передать студии", callback_data="price_consent|yes")],
+                    [InlineKeyboardButton("❌ Не надо", callback_data="price_consent|no")],
+                ])
+            )
+        else:
+            # Нет студии — уведомление владельцу
+            try:
+                await context.bot.send_message(
+                    chat_id=OWNER_CHAT_ID,
+                    text=(
+                        f"💬 Клиент запросил стоимость\n\n"
+                        f"🆔 {user_id_str}\n📱 ID: {user_id}\n⏰ {now}\n"
+                        f"📍 Источник: {source_label(user_id)}\n\n"
+                        f"🚗 Параметры: {sel_text}\n\n🔗 Написать: {link}"
+                    ),
+                )
+            except Exception as e:
+                logger.error("Ошибка отправки запроса стоимости: %s", e)
+            mark_lead_price_requested(user_id)
+            try:
+                await query.edit_message_reply_markup(
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("✍️ Написать в NiceCar", url="https://t.me/maxlipai")],
+                        [InlineKeyboardButton("🔄 Изменить параметры", callback_data="back_main")],
+                    ])
+                )
+            except Exception:
+                pass
+
+    elif data.startswith("price_consent|"):
+        answer = data[14:]
+        studio_name = get_user_studio(user_id)
+        if answer == "no":
+            try:
+                await query.edit_message_reply_markup(
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("💬 Узнать стоимость тюнинга", callback_data="price")],
+                        [InlineKeyboardButton("🚀 Поделиться с другом (+3 генерации)", url=f"https://t.me/share/url?url={quote(f'https://t.me/{BOT_USERNAME}?start=studio_{studio_name}')}&text={quote('Смотри как я изменил свою машину! Попробуй сам бесплатно 👇')}")],
+                        [InlineKeyboardButton("🔄 Изменить параметры", callback_data="back_main")],
+                    ])
+                )
+            except Exception:
+                pass
+            return
+        # Согласие дано
+        user = query.from_user
+        username = user.username
+        user_id_str = f"@{username}" if username else f"ID: {user_id}"
+        link = f"t.me/{username}" if username else f"tg://user?id={user_id}"
+        sel_text = format_selections_short(state.get("selections", {}))
+        now = datetime.now().strftime("%H:%M, %d.%m.%Y")
+        mark_lead_price_requested(user_id)
+        track_price_request(studio_name)
+        studios = _load(STUDIOS_FILE)
+        st = studios.get(studio_name, {}) if studio_name else {}
+        studio_tid = st.get("telegram_id")
+        contact = st.get("contact", "")
+        if studio_tid:
+            try:
+                await context.bot.send_message(
+                    chat_id=studio_tid,
+                    text=(
+                        f"💬 Клиент запросил стоимость — {studio_name}\n\n"
+                        f"🆔 {user_id_str}\n📱 ID: {user_id}\n⏰ {now}\n"
+                        f"📍 Источник: {source_label(user_id)}\n\n"
+                        f"🚗 Выбранные параметры: {sel_text}\n\n🔗 Написать клиенту: {link}"
+                    ),
+                )
+            except Exception as e:
+                logger.error("Ошибка уведомления студии о запросе стоимости: %s", e)
+        try:
+            await context.bot.send_message(
+                chat_id=ADMIN_ID,
+                text=f"📋 Копия — {studio_name}\n💬 Запрос стоимости\n🆔 {user_id_str} · {now}\n📍 Источник: {source_label(user_id)}",
+                disable_notification=True,
+            )
+        except Exception:
+            pass
+        if contact:
+            contact_url = f"https://t.me/{contact}"
+        elif studio_tid:
+            contact_url = f"tg://user?id={studio_tid}"
+        else:
+            contact_url = None
+        if contact_url:
+            try:
+                await query.edit_message_text(
+                    "Отлично! Напишите студии — ответят по стоимости 👇",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("✍️ Написать студии", url=contact_url)]
+                    ]),
+                )
+            except Exception:
+                await context.bot.send_message(
+                    chat_id=query.message.chat_id,
+                    text="Студия свяжется с вами в ближайшее время.",
+                )
+        else:
+            try:
+                await query.edit_message_text("Студия свяжется с вами в ближайшее время.")
+            except Exception:
+                pass
+
     elif data == "generate":
         if not state.get("photo_id"):
             await query.edit_message_text("Сначала загрузи фото своей машины!", reply_markup=main_menu(sel))
             return
 
         info = get_generation_info(user_id)
-        is_manager = user_id in MANAGER_IDS or user_id == ADMIN_ID
+        is_mgr = user_id == ADMIN_ID or is_manager(user_id)
 
         # Проверка лимита студии (кроме главного админа)
         studio_name = get_user_studio(user_id)
@@ -1428,7 +2046,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 )
                 return
 
-        if info["total_left"] <= 0 and not is_manager:
+        if info["total_left"] <= 0 and not is_mgr:
             ref_link = f"https://t.me/{BOT_USERNAME}?start=ref_{user_id}"
             await query.edit_message_text(
                 f"Ты использовал все бесплатные генерации 🎨\n\n"
@@ -1464,7 +2082,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 quality="medium",
                 n=1,
             )
-            image_bytes = add_watermark(io.BytesIO(base64.b64decode(response.data[0].b64_json)))
+            image_bytes = add_watermark(
+                io.BytesIO(base64.b64decode(response.data[0].b64_json)),
+                studio_name=get_user_studio(user_id) or None,
+            )
         except Exception as exc:
             logger.error("OpenAI error: %s", exc)
             await context.bot.send_message(
@@ -1473,7 +2094,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             )
             return
 
-        if not is_manager:
+        if not is_mgr:
             use_generation(user_id)
             await update_user_card(context.bot, user_id)
         else:
@@ -1518,7 +2139,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         else:
             ref_url = quote(f"https://t.me/{BOT_USERNAME}?start=ref_{user_id}")
         result_keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("💬 Узнать стоимость тюнинга", url="https://t.me/maxlipai")],
+            [InlineKeyboardButton("💬 Узнать стоимость тюнинга", callback_data="price")],
             [InlineKeyboardButton("🚀 Поделиться с другом (+3 генерации)", url=f"https://t.me/share/url?url={ref_url}&text={share_text}")],
             [InlineKeyboardButton("🔄 Изменить параметры", callback_data="back_main")],
         ])
@@ -1589,12 +2210,34 @@ async def cmd_blogger_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if not data:
         await update.message.reply_text("Блогеров пока нет. Добавь через /add_blogger [имя]")
         return
-    lines = ["📊 Статистика по блогерам\n"]
+    leads = _load(LEADS_FILE)
+    users = _load(USERS_FILE)
+    lead_stats: dict = {}
+    for uid, ld in leads.items():
+        if ld.get("interest") != "interested":
+            continue
+        src = (users.get(uid, {}) or {}).get("source") or {}
+        direct = src.get("type") == "blogger"
+        via = (src.get("via") or {}) if src.get("type") == "friend" else {}
+        bname = src.get("name") if direct else (via.get("name") if via.get("type") == "blogger" else None)
+        if not bname:
+            continue
+        s = lead_stats.setdefault(bname, {"leads": 0, "friend_leads": 0, "price": 0})
+        if direct:
+            s["leads"] += 1
+        else:
+            s["friend_leads"] += 1
+        if ld.get("price_requested"):
+            s["price"] += 1
+    lines = ["📊 Статистика по блогерам и площадкам\n"]
     for name, info in data.items():
+        s = lead_stats.get(name, {"leads": 0, "friend_leads": 0, "price": 0})
         lines.append(
             f"👤 {name}\n"
             f"  Переходов: {len(info.get('clicks', []))}\n"
             f"  Генерировали: {len(info.get('generated', []))}\n"
+            f"  Лидов: {s['leads']} (+{s['friend_leads']} через друзей)\n"
+            f"  Запросили цену: {s['price']}\n"
             f"  Купили Stars: {len(info.get('purchased', []))}\n"
         )
     await update.message.reply_text("\n".join(lines))
@@ -1620,6 +2263,21 @@ async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
+
+    # Ввод контакта студии (владелец студии после /trial или /contact)
+    if user_id in owner_contact_state:
+        studio_name = owner_contact_state.pop(user_id)
+        contact = update.message.text.strip()
+        for prefix in ("https://t.me/", "http://t.me/", "t.me/"):
+            if contact.startswith(prefix):
+                contact = contact[len(prefix):]
+        contact = contact.lstrip("@").split()[0] if contact.strip() else ""
+        studios = _load(STUDIOS_FILE)
+        if studio_name in studios:
+            studios[studio_name]["contact"] = contact
+            _save(STUDIOS_FILE, studios)
+        await update.message.reply_text(f"✅ Контакт сохранён: @{contact}")
+        return
 
     # Ввод индивидуального дизайна
     if user_states.get(user_id, {}).get("awaiting_custom_design"):
@@ -1698,6 +2356,12 @@ async def cmd_trial(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 "Проверить свой ID: @userinfobot"
             ),
         )
+        if not contact:
+            owner_contact_state[telegram_id] = name
+            await context.bot.send_message(
+                chat_id=telegram_id,
+                text="Укажите @username, куда клиентам писать по стоимости (без @):",
+            )
     except Exception as e:
         logger.error("Ошибка отправки студии: %s", e)
     await update.message.reply_text(
@@ -1707,18 +2371,288 @@ async def cmd_trial(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
+async def cmd_activate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.effective_user.id != ADMIN_ID:
+        return
+    if len(context.args) < 2:
+        await update.message.reply_text("Использование: /activate [studio] [starter|business|pro]")
+        return
+    name = context.args[0].lower()
+    plan = context.args[1].lower()
+    if plan not in PLAN_LIMITS:
+        await update.message.reply_text(f"Неизвестный тариф: {plan}. Доступны: starter, business, pro")
+        return
+    studios = _load(STUDIOS_FILE)
+    if name not in studios:
+        await update.message.reply_text(f"Студия '{name}' не найдена.")
+        return
+    start = date.today()
+    end = start + timedelta(days=30)
+    studios[name].update({
+        "status": "active",
+        "plan": plan,
+        "used": 0,
+        "limit": PLAN_LIMITS[plan],
+        "start_date": str(start),
+        "end_date": str(end),
+    })
+    studios[name].pop("limit_notified", None)
+    _save(STUDIOS_FILE, studios)
+    tid = studios[name]["telegram_id"]
+    await set_studio_commands(context.bot, tid)
+    plan_name = PLAN_NAMES[plan]
+    try:
+        await context.bot.send_message(
+            chat_id=tid,
+            text=(
+                f"🎉 Тариф {plan_name} подключён!\n\n"
+                f"Пришлите логотип студии (файлом или фото, PNG или JPG) — "
+                f"он будет на всех визуализациях ваших клиентов."
+            ),
+        )
+        owner_logo_state[tid] = name
+    except Exception as e:
+        logger.error("Ошибка уведомления студии об активации: %s", e)
+    await update.message.reply_text(
+        f"✅ Тариф '{plan_name}' подключён для '{name}'\n"
+        f"Генераций: {PLAN_LIMITS[plan]}\n"
+        f"Период: {start} — {end}"
+    )
+
+
+async def cmd_studio_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.effective_user.id != ADMIN_ID:
+        return
+    studios = _load(STUDIOS_FILE)
+    if not studios:
+        await update.message.reply_text("Студий пока нет.")
+        return
+    mgrs_data = _load_managers()
+    lines = ["📊 Статистика студий\n"]
+    for name, st in studios.items():
+        status = st.get("status", "trial")
+        plan = PLAN_NAMES.get(st.get("plan", ""), "")
+        status_label = f"{status}" + (f"/{plan}" if plan and status == "active" else "")
+        days_left = max(0, studio_days_left(st))
+        users_c = st.get("users_count", 0)
+        used = st.get("used", 0)
+        limit = st.get("limit", 150)
+        leads = st.get("leads_count", 0)
+        price_req = st.get("price_requests", 0)
+        mgr_count = len(mgrs_data.get("studios", {}).get(name, {}))
+        conv_ul = f"{leads/users_c*100:.0f}%" if users_c > 0 else "—"
+        conv_lp = f"{price_req/leads*100:.0f}%" if leads > 0 else "—"
+        lines.append(
+            f"🏢 {name} [{status_label}] · {days_left} дн.\n"
+            f"  👥 {users_c} польз · 🎨 {used}/{limit} ген\n"
+            f"  💡 {leads} лидов · 💬 {price_req} запросов стоим.\n"
+            f"  👨‍💼 {mgr_count} менедж\n"
+            f"  📈 польз→лид: {conv_ul} · лид→цена: {conv_lp}\n"
+        )
+    text = "\n".join(lines)
+    for i in range(0, len(text), 4000):
+        await update.message.reply_text(text[i:i+4000])
+
+
+async def cmd_studio_leads(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.effective_user.id != ADMIN_ID:
+        return
+    if not context.args:
+        await update.message.reply_text("Использование: /studio_leads [studio]")
+        return
+    studio_name = context.args[0].lower()
+    leads = _load(LEADS_FILE)
+    users_data = _load(USERS_FILE)
+    studio_leads = [
+        (uid, data) for uid, data in leads.items()
+        if data.get("studio") == studio_name
+    ]
+    studio_leads.sort(key=lambda x: x[1].get("date", ""), reverse=True)
+    studio_leads = studio_leads[:20]
+    if not studio_leads:
+        await update.message.reply_text(f"Лидов для '{studio_name}' не найдено.")
+        return
+    lines = [f"📋 Последние лиды — {studio_name}\n"]
+    for uid, data in studio_leads:
+        u = users_data.get(uid, {})
+        uname = u.get("username", "")
+        name_u = u.get("name", uid)
+        id_line = f"@{uname}" if uname else f"ID: {uid}"
+        service = data.get("service", data.get("interest", "—"))
+        dt = data.get("date", "—")
+        price_icon = "✅" if data.get("price_requested") else "❌"
+        src = data.get("source") or source_label(int(uid))
+        lines.append(f"👤 {id_line} · {name_u}\n  ⏰ {dt}\n  🚗 {service}\n  📍 {src}\n  💬 Запросил цену: {price_icon}\n")
+    await update.message.reply_text("\n".join(lines))
+
+
 async def cmd_mystats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     studio = get_studio_by_owner(user_id)
     if not studio:
         return
+    status = studio.get("status", "trial")
+    if status == "active":
+        plan_text = PLAN_NAMES.get(studio.get("plan", ""), "Активный")
+    elif status == "trial":
+        plan_text = "Пробный период"
+    else:
+        plan_text = "Истёк"
+    days_left = max(0, studio_days_left(studio))
+    mgrs = _load_managers()
+    mgr_count = len(mgrs.get("studios", {}).get(studio["name"], {}))
     await update.message.reply_text(
         f"📊 Ваша статистика — {studio['name']}\n\n"
-        f"👥 Пользователей по вашей ссылке: {studio.get('users_count', 0)}\n"
+        f"📋 Тариф: {plan_text}\n"
+        f"👥 Пользователей по ссылке: {studio.get('users_count', 0)}\n"
         f"💡 Лидов получено: {studio.get('leads_count', 0)}\n"
+        f"💬 Запросов стоимости: {studio.get('price_requests', 0)}\n"
         f"🎨 Генераций использовано: {studio.get('used', 0)} из {studio['limit']}\n"
-        f"📅 Осталось дней: {max(0, studio_days_left(studio))}"
+        f"👨‍💼 Менеджеров: {mgr_count}\n"
+        f"📅 Осталось дней: {days_left}"
     )
+
+
+async def cmd_managers(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.effective_user.id != ADMIN_ID:
+        return
+    await _show_managers_list(update.message, context, None)
+
+
+async def cmd_studio_managers(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.effective_user.id != ADMIN_ID:
+        return
+    if not context.args:
+        await update.message.reply_text("Использование: /studio_managers [studio]")
+        return
+    studio_name = context.args[0].lower()
+    if studio_name not in _load(STUDIOS_FILE):
+        await update.message.reply_text(f"Студия '{studio_name}' не найдена.")
+        return
+    await _show_managers_list(update.message, context, studio_name)
+
+
+async def cmd_add_manager(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.effective_user.id != ADMIN_ID:
+        return
+    if len(context.args) < 2:
+        await update.message.reply_text("Использование: /add_manager [telegram_id] [имя] [studio — необязательно]")
+        return
+    try:
+        target_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("Ошибка: telegram_id должен быть числом")
+        return
+    name = context.args[1]
+    studio_name = context.args[2].lower() if len(context.args) > 2 else None
+    if studio_name and studio_name not in _load(STUDIOS_FILE):
+        await update.message.reply_text(f"Студия '{studio_name}' не найдена.")
+        return
+    mgrs = _load_managers()
+    key = str(target_id)
+    mgrs.get("nicecar", {}).pop(key, None)
+    for sm in mgrs.get("studios", {}).values():
+        sm.pop(key, None)
+    info = {"name": name, "username": "", "added": str(date.today())}
+    if studio_name:
+        mgrs.setdefault("studios", {}).setdefault(studio_name, {})[key] = info
+        display = studio_name
+    else:
+        mgrs.setdefault("nicecar", {})[key] = info
+        display = "NiceCar"
+    _save(MANAGERS_FILE, mgrs)
+    await update.message.reply_text(f"✅ {name} (ID: {target_id}) добавлен как менеджер {display}")
+
+
+async def _handle_manager_invite(update, context, user, token: str) -> None:
+    import secrets as _secrets
+    mgrs = _load_managers()
+    invite = mgrs.get("invites", {}).get(token)
+    if not invite:
+        await update.message.reply_text("❌ Ссылка недействительна. Попросите новую.")
+        return
+    try:
+        expires = datetime.fromisoformat(invite["expires"])
+    except Exception:
+        expires = datetime.min
+    if datetime.now() > expires:
+        mgrs["invites"].pop(token, None)
+        _save(MANAGERS_FILE, mgrs)
+        await update.message.reply_text("❌ Ссылка истекла. Попросите новую.")
+        return
+    owner = invite["owner"]
+    inviter_id = invite.get("inviter_id")
+    mgrs["invites"].pop(token, None)
+    key = str(user.id)
+    # Убрать из других мест
+    mgrs.get("nicecar", {}).pop(key, None)
+    for sm in mgrs.get("studios", {}).values():
+        sm.pop(key, None)
+    info = {"name": user.full_name, "username": user.username or "", "added": str(date.today())}
+    if owner == "nicecar":
+        mgrs.setdefault("nicecar", {})[key] = info
+        display = "NiceCar"
+    else:
+        st_lim = _load(STUDIOS_FILE).get(owner, {})
+        if len(mgrs.get("studios", {}).get(owner, {})) >= _manager_limit_for_studio(st_lim):
+            await update.message.reply_text("❌ У студии достигнут лимит менеджеров. Обратитесь к владельцу студии.")
+            return
+        mgrs.setdefault("studios", {}).setdefault(owner, {})[key] = info
+        display = owner
+        register_user(user.id, user)
+        set_user_studio(user.id, owner)
+    _save(MANAGERS_FILE, mgrs)
+    register_user(user.id, user)
+    await update.message.reply_text(
+        f"✅ Вы добавлены как менеджер {display}. Показывайте клиентам их авто после тюнинга."
+    )
+    if inviter_id:
+        try:
+            uname_text = f" @{user.username}" if user.username else ""
+            await context.bot.send_message(
+                chat_id=inviter_id,
+                text=f"👤 Добавлен менеджер: {user.full_name}{uname_text}",
+            )
+        except Exception:
+            pass
+
+
+async def cmd_logo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+    studio = get_studio_by_owner(user_id)
+    if not studio:
+        return
+    if studio.get("status") != "active":
+        await update.message.reply_text("Загрузка логотипа доступна только на платном тарифе.")
+        return
+    owner_logo_state[user_id] = studio["name"]
+    current = studio.get("logo_path", "")
+    suffix = " (уже загружен, заменить?)" if current and os.path.exists(current) else ""
+    await update.message.reply_text(
+        f"📸 Отправьте логотип студии файлом или фото (PNG или JPG){suffix}.\n"
+        "Белый фон будет убран автоматически."
+    )
+
+
+async def cmd_contact(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+    studio = get_studio_by_owner(user_id)
+    if not studio:
+        return
+    current = studio.get("contact", "")
+    suffix = f"\n\nТекущий контакт: @{current}" if current else ""
+    owner_contact_state[user_id] = studio["name"]
+    await update.message.reply_text(
+        f"📱 Укажите @username, куда клиентам писать по стоимости{suffix}\n\nОтправьте username (без @):"
+    )
+
+
+async def cmd_team(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+    studio = get_studio_by_owner(user_id)
+    if not studio:
+        return
+    await _show_managers_list(update.message, context, studio["name"])
 
 
 async def cmd_mylink(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1731,60 +2665,155 @@ async def cmd_mylink(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
 
 async def daily_studio_job(context) -> None:
-    import pytz
     studios = _load(STUDIOS_FILE)
-    active_lines = []
+    summary_lines = []
+    changed = False
+
     for name, studio in list(studios.items()):
-        if studio["status"] != "trial":
-            continue
-        elapsed = studio_days_elapsed(studio)
+        status = studio.get("status", "trial")
         tid = studio["telegram_id"]
         used = studio.get("used", 0)
         leads = studio.get("leads_count", 0)
-        limit = studio["limit"]
-        if elapsed == 3:
-            try:
-                await context.bot.send_message(chat_id=tid, text=(
-                    f"⏰ Осталось 2 дня пробного периода.\n"
-                    f"Использовано {used} из {limit} генераций.\n"
-                    f"Получено лидов: {leads}\n\n"
-                    f"Хотите продолжить?\nНапишите нам: @maxlipai"
-                ))
-            except Exception as e:
-                logger.error("Ошибка напоминания студии %s: %s", name, e)
-        elif elapsed == 5:
-            try:
-                await context.bot.send_message(chat_id=tid, text=(
-                    f"⚠️ Пробный период заканчивается завтра!\n"
-                    f"Использовано {used} из {limit} генераций.\n"
-                    f"Получено лидов: {leads}\n\n"
-                    f"Выберите пакет чтобы продолжить:\n"
-                    f"⭐ Старт — $99/мес (100 клиентов, 600 генераций)\n"
-                    f"⭐ Бизнес — $199/мес (250 клиентов, 1500 генераций)\n"
-                    f"⭐ Про — $399/мес (500 клиентов, 3000 генераций)\n\n"
-                    f"Написать менеджеру: @maxlipai"
-                ))
-            except Exception as e:
-                logger.error("Ошибка напоминания студии %s: %s", name, e)
-        elif elapsed >= 6:
-            studios[name]["status"] = "expired"
-            _save(STUDIOS_FILE, studios)
-            try:
-                await context.bot.send_message(chat_id=tid, text=(
-                    "❌ Пробный период завершён.\nДля продолжения напишите: @maxlipai"
-                ))
-            except Exception as e:
-                logger.error("Ошибка уведомления о конце триала %s: %s", name, e)
-            continue
-        active_lines.append(f"- {name}: день {elapsed}/5, использовано {used} генераций, лидов: {leads}")
-    if active_lines:
+        price_req = studio.get("price_requests", 0)
+
+        if status == "trial":
+            limit = studio["limit"]
+            elapsed = studio_days_elapsed(studio)
+            if elapsed == 3:
+                try:
+                    await context.bot.send_message(chat_id=tid, text=(
+                        f"⏰ Осталось 2 дня пробного периода.\n"
+                        f"Использовано {used} из {limit} генераций.\n"
+                        f"Получено лидов: {leads}\n\n"
+                        f"Хотите продолжить?\nНапишите нам: @maxlipai"
+                    ))
+                except Exception as e:
+                    logger.error("Ошибка напоминания студии %s: %s", name, e)
+            elif elapsed == 5:
+                try:
+                    await context.bot.send_message(chat_id=tid, text=(
+                        f"⚠️ Пробный период заканчивается завтра!\n"
+                        f"Использовано {used} из {limit} генераций.\n"
+                        f"Получено лидов: {leads}\n\n"
+                        f"Выберите пакет чтобы продолжить:\n"
+                        f"⭐ Старт — $99/мес (до 200 контактов, 600 генераций)\n"
+                        f"⭐ Бизнес — $199/мес (до 500 контактов, 1500 генераций)\n"
+                        f"⭐ Про — $399/мес (до 1000 контактов, 3000 генераций)\n\n"
+                        f"Написать менеджеру: @maxlipai"
+                    ))
+                except Exception as e:
+                    logger.error("Ошибка напоминания студии %s: %s", name, e)
+            elif elapsed >= 6:
+                studios[name]["status"] = "expired"
+                changed = True
+                try:
+                    await context.bot.send_message(chat_id=tid, text=(
+                        "❌ Пробный период завершён.\nДля продолжения напишите: @maxlipai"
+                    ))
+                except Exception as e:
+                    logger.error("Ошибка уведомления о конце триала %s: %s", name, e)
+                continue
+            summary_lines.append(
+                f"- [trial] {name}: д.{elapsed}/5, {used} ген, {leads} лидов, {price_req} запросов"
+            )
+
+        elif status == "active":
+            plan = studio.get("plan", "")
+            limit = studio.get("limit", 0)
+            days_left = studio_days_left(studio)
+            if days_left == 3:
+                try:
+                    await context.bot.send_message(chat_id=tid, text=(
+                        f"⏰ До конца тарифа {PLAN_NAMES.get(plan, plan)} осталось 3 дня.\n"
+                        f"Для продления напишите: @maxlipai"
+                    ))
+                except Exception as e:
+                    logger.error("Ошибка напоминания активной студии %s: %s", name, e)
+            elif days_left <= 0:
+                studios[name]["status"] = "expired"
+                changed = True
+                try:
+                    await context.bot.send_message(chat_id=tid, text=(
+                        "❌ Срок тарифа закончился. Для продления напишите: @maxlipai"
+                    ))
+                except Exception as e:
+                    logger.error("Ошибка уведомления о конце тарифа %s: %s", name, e)
+                continue
+            summary_lines.append(
+                f"- [active/{PLAN_NAMES.get(plan, plan)}] {name}: {days_left} дн., "
+                f"{used}/{limit} ген, {leads} лидов, {price_req} запросов"
+            )
+
+    if changed:
+        _save(STUDIOS_FILE, studios)
+
+    if summary_lines:
         try:
             await context.bot.send_message(
                 chat_id=ADMIN_ID,
-                text="📊 Активные триалы:\n" + "\n".join(active_lines),
+                text="📊 Студии:\n" + "\n".join(summary_lines),
             )
         except Exception as e:
             logger.error("Ошибка отчёта админу: %s", e)
+
+
+async def logo_remind_job(context) -> None:
+    """Ежедневно в 10:00 — напоминать активным студиям без логотипа (макс. 3 раза)."""
+    studios = _load(STUDIOS_FILE)
+    changed = False
+    for name, studio in studios.items():
+        if studio.get("status") != "active":
+            continue
+        logo_path = studio.get("logo_path", "")
+        if logo_path and os.path.exists(logo_path):
+            continue
+        count = studio.get("logo_remind_count", 0)
+        if count >= 3:
+            continue
+        tid = studio["telegram_id"]
+        try:
+            await context.bot.send_message(
+                chat_id=tid,
+                text=(
+                    "📸 Напоминание: пришлите логотип студии командой /logo — "
+                    "он появится на всех визуализациях клиентов."
+                ),
+            )
+            owner_logo_state[tid] = name
+            studios[name]["logo_remind_count"] = count + 1
+            changed = True
+        except Exception as e:
+            logger.error("Ошибка напоминания о логотипе %s: %s", name, e)
+    if changed:
+        _save(STUDIOS_FILE, studios)
+
+
+async def cmd_delete_my_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+    key = str(user_id)
+    for filepath in [USERS_FILE, REFERRALS_FILE, COUNTERS_FILE, LEADS_FILE, CARDS_FILE]:
+        data = _load(filepath)
+        if key in data:
+            del data[key]
+            _save(filepath, data)
+    purchases = _load(PURCHASES_FILE)
+    changed = False
+    for day in purchases.values():
+        before = len(day)
+        day[:] = [p for p in day if p.get("user_id") != user_id]
+        if len(day) != before:
+            changed = True
+    if changed:
+        _save(PURCHASES_FILE, purchases)
+    mgrs = _load_managers()
+    mgrs.get("nicecar", {}).pop(key, None)
+    for sm in mgrs.get("studios", {}).values():
+        sm.pop(key, None)
+    _save(MANAGERS_FILE, mgrs)
+    user_states.pop(user_id, None)
+    owner_contact_state.pop(user_id, None)
+    owner_logo_state.pop(user_id, None)
+    await update.message.reply_text("✅ Ваши данные удалены.")
 
 
 async def cmd_test_qual(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1810,8 +2839,11 @@ async def cmd_chatid(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 # ── Запуск ────────────────────────────────────────────────────────────────────
 
 STUDIO_COMMANDS = [
-    BotCommand("mystats", "📊 Моя статистика"),
-    BotCommand("mylink", "🔗 Моя ссылка"),
+    BotCommand("mystats",  "📊 Моя статистика"),
+    BotCommand("mylink",   "🔗 Моя ссылка"),
+    BotCommand("logo",     "🖼 Загрузить логотип"),
+    BotCommand("contact",  "📱 Контакт для клиентов"),
+    BotCommand("team",     "👥 Мои менеджеры"),
 ]
 
 async def set_studio_commands(bot, telegram_id: int) -> None:
@@ -1837,6 +2869,12 @@ async def post_init(app: Application) -> None:
         BotCommand("add_blogger", "➕ Добавить блогера"),
         BotCommand("blogger_stats", "📈 Статистика блогеров"),
         BotCommand("trial", "🏢 Создать студию"),
+        BotCommand("activate",        "✅ Подключить тариф"),
+        BotCommand("studio_stats",    "📊 Статистика студий"),
+        BotCommand("studio_leads",    "📋 Лиды студии"),
+        BotCommand("managers",        "👥 Менеджеры NiceCar"),
+        BotCommand("studio_managers", "👥 Менеджеры студии"),
+        BotCommand("add_manager",     "➕ Добавить менеджера"),
         BotCommand("mystats", "📉 Статистика студии"),
         BotCommand("mylink", "🔗 Ссылка студии"),
         BotCommand("test_qual", "🧪 Тест квалификации"),
@@ -1846,7 +2884,7 @@ async def post_init(app: Application) -> None:
     # Устанавливаем команды для всех существующих студий
     studios = _load(STUDIOS_FILE)
     for studio in studios.values():
-        if studio.get("status") == "trial":
+        if studio.get("status") in ("trial", "active"):
             await set_studio_commands(app.bot, studio["telegram_id"])
 
 
@@ -1862,13 +2900,25 @@ def main() -> None:
     app.add_handler(CommandHandler("chatid", cmd_chatid))
     app.add_handler(CommandHandler("test_qual", cmd_test_qual))
     app.add_handler(CommandHandler("trial", cmd_trial))
-    app.add_handler(CommandHandler("mystats", cmd_mystats))
-    app.add_handler(CommandHandler("mylink", cmd_mylink))
+    app.add_handler(CommandHandler("activate",      cmd_activate))
+    app.add_handler(CommandHandler("studio_stats",    cmd_studio_stats))
+    app.add_handler(CommandHandler("studio_leads",    cmd_studio_leads))
+    app.add_handler(CommandHandler("delete_my_data",  cmd_delete_my_data))
+    app.add_handler(CommandHandler("mystats",       cmd_mystats))
+    app.add_handler(CommandHandler("mylink",   cmd_mylink))
+    app.add_handler(CommandHandler("logo",            cmd_logo))
+    app.add_handler(CommandHandler("contact",         cmd_contact))
+    app.add_handler(CommandHandler("team",            cmd_team))
+    app.add_handler(CommandHandler("managers",        cmd_managers))
+    app.add_handler(CommandHandler("studio_managers", cmd_studio_managers))
+    app.add_handler(CommandHandler("add_manager",     cmd_add_manager))
 
     import pytz
     from datetime import time as dtime
     tz = pytz.timezone("Europe/Minsk")
     app.job_queue.run_daily(daily_studio_job, time=dtime(9, 0, tzinfo=tz))
+    app.job_queue.run_daily(logo_remind_job, time=dtime(10, 0, tzinfo=tz))
+    app.add_handler(MessageHandler(filters.Document.IMAGE, handle_document))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(PreCheckoutQueryHandler(handle_pre_checkout))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, handle_successful_payment))
