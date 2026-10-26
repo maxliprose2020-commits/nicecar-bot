@@ -1087,10 +1087,16 @@ def _load_managers() -> dict:
     data.setdefault("nicecar", {})
     data.setdefault("studios", {})
     data.setdefault("invites", {})
+    data.setdefault("disabled_env", [])
     return data
 
+def env_manager_ids() -> list:
+    """Менеджеры из переменной MANAGER_IDS, кроме удалённых через бота."""
+    disabled = set(str(x) for x in _load_managers().get("disabled_env", []))
+    return [m for m in MANAGER_IDS if str(m) not in disabled]
+
 def is_manager(user_id: int) -> bool:
-    if user_id in MANAGER_IDS:
+    if user_id in env_manager_ids():
         return True
     mgrs = _load_managers()
     key = str(user_id)
@@ -1103,7 +1109,7 @@ def is_manager(user_id: int) -> bool:
 
 def get_manager_studio(user_id: int) -> str | None:
     """Возвращает имя студии, если пользователь — менеджер студии; None для NiceCar-менеджеров."""
-    if user_id in MANAGER_IDS:
+    if user_id in env_manager_ids():
         return None
     mgrs = _load_managers()
     key = str(user_id)
@@ -1118,7 +1124,7 @@ def can_manage_scope(user_id: int, scope: str) -> bool:
     """Админ управляет всеми менеджерами, владелец студии — только своими."""
     if user_id == ADMIN_ID:
         return True
-    if scope == "nicecar":
+    if scope in ("nicecar", "env"):
         return False
     studio = get_studio_by_owner(user_id)
     return bool(studio and studio.get("name") == scope)
@@ -1163,11 +1169,16 @@ async def _show_managers_list(source, context, studio_name: str | None) -> None:
         )])
 
     if studio_name is None:
-        for mid in MANAGER_IDS:
+        for mid in env_manager_ids():
             env_name = get_user_name(mid)
-            text += f"⚙️ {env_name} (из настроек)\n\n"
+            gen_env = stats.get(str(mid), {}).get("count", 0)
+            text += f"⚙️ {env_name} (из настроек)\n   Генераций: {gen_env}\n\n"
+            rows.append([InlineKeyboardButton(
+                f"❌ Удалить {env_name}",
+                callback_data=f"del_mgr_confirm|env|{mid}"
+            )])
 
-    if not managers_dict and (studio_name is not None or not MANAGER_IDS):
+    if not managers_dict and (studio_name is not None or not env_manager_ids()):
         text += "Менеджеров пока нет.\n\n"
 
     rows.append([InlineKeyboardButton("➕ Добавить менеджера", callback_data=invite_cb)])
@@ -1840,6 +1851,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         mgrs = _load_managers()
         if scope == "nicecar":
             info = mgrs.get("nicecar", {}).get(uid, {})
+        elif scope == "env":
+            info = {"name": get_user_name(int(uid))}
         else:
             info = mgrs.get("studios", {}).get(scope, {}).get(uid, {})
         name_m = info.get("name", uid) if info else uid
@@ -1857,6 +1870,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         mgrs = _load_managers()
         if scope == "nicecar":
             info = mgrs.get("nicecar", {}).pop(uid, {})
+        elif scope == "env":
+            info = {"name": get_user_name(int(uid))}
+            if uid not in [str(x) for x in mgrs["disabled_env"]]:
+                mgrs["disabled_env"].append(uid)
         else:
             info = mgrs.get("studios", {}).get(scope, {}).pop(uid, {})
         removed_name = info.get("name", uid) if info else uid
@@ -1866,13 +1883,13 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         except Exception:
             pass
         await query.answer(f"Менеджер {removed_name} удалён")
-        await _show_managers_list(query, context, None if scope == "nicecar" else scope)
+        await _show_managers_list(query, context, None if scope in ("nicecar", "env") else scope)
 
     elif data.startswith("del_mgr_cancel|"):
         scope = data[15:]
         if not can_manage_scope(user_id, scope):
             return
-        await _show_managers_list(query, context, None if scope == "nicecar" else scope)
+        await _show_managers_list(query, context, None if scope in ("nicecar", "env") else scope)
 
     elif data == "back_main":
         if query.message.photo:
@@ -2550,6 +2567,7 @@ async def cmd_add_manager(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
     mgrs = _load_managers()
     key = str(target_id)
+    mgrs["disabled_env"] = [x for x in mgrs["disabled_env"] if str(x) != key]
     mgrs.get("nicecar", {}).pop(key, None)
     for sm in mgrs.get("studios", {}).values():
         sm.pop(key, None)
