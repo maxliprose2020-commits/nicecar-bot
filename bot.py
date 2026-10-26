@@ -1518,7 +1518,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         else:
             ref_url = quote(f"https://t.me/{BOT_USERNAME}?start=ref_{user_id}")
         result_keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("💬 Узнать стоимость тюнинга", url="https://t.me/nicecar_center")],
+            [InlineKeyboardButton("💬 Узнать стоимость тюнинга", url="https://t.me/maxlipai")],
             [InlineKeyboardButton("🚀 Поделиться с другом (+3 генерации)", url=f"https://t.me/share/url?url={ref_url}&text={share_text}")],
             [InlineKeyboardButton("🔄 Изменить параметры", callback_data="back_main")],
         ])
