@@ -33,6 +33,7 @@ OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
 OWNER_CHAT_ID = int(os.environ.get("OWNER_CHAT_ID", "862676483"))
 ADMIN_ID = int(os.environ.get("ADMIN_ID", "862676483"))
 BOT_USERNAME = os.environ.get("BOT_USERNAME", "nicecar_tuning_bot")
+PRIVACY_URL = os.environ.get("PRIVACY_URL", "")  # ссылка на политику конфиденциальности (необязательно)
 MANAGER_IDS = set(
     int(x.strip()) for x in os.environ.get("MANAGER_IDS", "").split(",") if x.strip().isdigit()
 )
